@@ -47,7 +47,7 @@ LANG = _config.get("lang", "en")
 GITHUB_REPO = _config.get("github_repo", "xmin-02/Claude-telegram-bot")
 
 DEFAULT_SETTINGS = {
-    "show_cost": True,
+    "show_cost": False,
     "show_status": True,
     "show_global_cost": True,
 }
@@ -449,7 +449,6 @@ def run_claude(message, session_id=None):
                 out_tok = usage.get("output_tokens", 0)
                 if cost:
                     state.last_cost = cost; state.total_cost += cost
-                    state.global_tokens += in_tok + out_tok
                     if settings["show_cost"]:
                         dur_s = duration / 1000 if duration else 0
                         mins, secs = divmod(int(dur_s), 60)
@@ -501,6 +500,16 @@ def _claude_env():
         if os.path.isdir(gopath):
             env["GOPATH"] = gopath
     return env
+
+def _get_monthly_tokens():
+    try:
+        token_file = os.path.expanduser("~/.claude/hooks/.monthly-tokens.json")
+        with open(token_file, encoding="utf-8") as f:
+            data = json.load(f)
+        return (data.get("input", 0) + data.get("output", 0) +
+                data.get("cache_read", 0) + data.get("cache_create", 0))
+    except Exception:
+        return 0
 
 def get_global_usage():
     total_cost = 0.0
@@ -1000,7 +1009,7 @@ def handle_message(text):
                 _save_session_id(new_sid)
                 log.info("Auto-connected to session: %s", new_sid)
             active_sid = state.session_id or new_sid or sid
-            token_footer = f"{time.strftime('%Y-%m')} tokens: {state.global_tokens:,}"
+            token_footer = f"{time.strftime('%Y-%m')} tokens: {_get_monthly_tokens():,}"
             if questions:
                 _show_questions(questions, active_sid)
                 if output and output not in ("",):
@@ -1085,12 +1094,8 @@ def process_update(update):
 def poll_loop():
     offset = 0
     log.info("Bot started.")
-    try:
-        _, g_in, g_out, _ = get_global_usage()
-        state.global_tokens = g_in + g_out
-        log.info("Global tokens loaded: %d", state.global_tokens)
-    except Exception:
-        state.global_tokens = 0
+    state.global_tokens = _get_monthly_tokens()
+    log.info("Monthly tokens loaded: %d", state.global_tokens)
     send_html("<b>Claude Code Bot started</b>\nSend /help to see available commands.")
     while True:
         try:
