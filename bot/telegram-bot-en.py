@@ -797,8 +797,13 @@ def handle_cd(text):
     send_html(f"<b>Changed directory</b>\n<code>{escape_html(WORK_DIR)}</code>")
 
 def handle_ls(text):
-    parts = text.split(maxsplit=1)
-    target = parts[1].strip() if len(parts) > 1 and parts[1].strip() else WORK_DIR
+    args = text.split()[1:]
+    show_all = False; target = WORK_DIR
+    for arg in args:
+        if arg.startswith("-"):
+            if "a" in arg: show_all = True
+        else:
+            target = arg
     if not os.path.isabs(target):
         target = os.path.join(WORK_DIR, target)
     target = os.path.normpath(target)
@@ -810,6 +815,8 @@ def handle_ls(text):
     except PermissionError:
         send_html(f"<b>Error:</b> Permission denied\n<code>{escape_html(target)}</code>")
         return
+    if not show_all:
+        entries = [e for e in entries if not e.startswith(".")]
     dirs = []; files = []
     for name in sorted(entries, key=str.lower):
         full = os.path.join(target, name)
