@@ -390,7 +390,11 @@ def run_claude(message, session_id=None):
                             qs = block.get("input", {}).get("questions", [])
                             if qs:
                                 pending_questions = qs
-                                log.info("AskUserQuestion detected: %d questions", len(qs))
+                                log.info("AskUserQuestion detected: %d questions, killing proc", len(qs))
+                                proc.kill()
+                                break
+                    if pending_questions:
+                        break
                 if has_tool_use:
                     unsent = final_text[sent_text_count:]
                     if unsent:
@@ -429,11 +433,15 @@ def run_claude(message, session_id=None):
                     dur_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
                     cost_line = f"\U0001f4b0 ${cost:.4f} | \u23f1 {dur_str} | \U0001f504 {turns} turns | \U0001f4ca {in_tok:,}+{out_tok:,} tokens"
                     send_html(f"<i>{cost_line}</i>")
-        proc.wait(timeout=30)
-        stderr_out = proc.stderr.read().decode("utf-8", errors="replace").strip()
+        try: proc.wait(timeout=10)
+        except Exception: pass
+        try: stderr_out = proc.stderr.read().decode("utf-8", errors="replace").strip()
+        except Exception: stderr_out = ""
         with state.lock: state.claude_proc = None
         unsent = final_text[sent_text_count:]
         output = "\n\n".join(unsent).strip()
+        if pending_questions:
+            return output or "", captured_session_id, pending_questions
         if proc.returncode != 0 and not output and sent_text_count == 0:
             err_msg = f"Error (code {proc.returncode}):\n{stderr_out[:500]}" if stderr_out else f"Error (code {proc.returncode})"
             return err_msg, captured_session_id, None
