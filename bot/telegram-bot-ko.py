@@ -76,6 +76,7 @@ class State:
     model = None
     total_cost = 0.0
     last_cost = 0.0
+    global_tokens = 0
     lock = threading.Lock()
 
 def _save_session_id(sid):
@@ -181,13 +182,16 @@ def send_html(text):
     if not result or not result.get("ok"):
         send_text(re.sub(r"<[^>]+>", "", text))
 
-def send_long(header, body_md):
+def send_long(header, body_md, footer=None):
     html_body = md_to_telegram_html(body_md)
     chunks = split_message(html_body)
     total = len(chunks)
     for i, chunk in enumerate(chunks):
         part = f" ({i+1}/{total})" if total > 1 else ""
-        send_html(f"<b>{escape_html(header)}{part}</b>\n{'━'*20}\n{chunk}")
+        msg = f"<b>{escape_html(header)}{part}</b>\n{'━'*20}\n{chunk}"
+        if footer and i == total - 1:
+            msg += f"\n{'━'*20}\n<i>{footer}</i>"
+        send_html(msg)
         if i < total - 1: time.sleep(0.3)
 
 def send_typing():
@@ -445,6 +449,7 @@ def run_claude(message, session_id=None):
                 out_tok = usage.get("output_tokens", 0)
                 if cost:
                     state.last_cost = cost; state.total_cost += cost
+                    state.global_tokens += in_tok + out_tok
                     if settings["show_cost"]:
                         dur_s = duration / 1000 if duration else 0
                         mins, secs = divmod(int(dur_s), 60)
@@ -995,17 +1000,18 @@ def handle_message(text):
                 _save_session_id(new_sid)
                 log.info("Auto-connected to session: %s", new_sid)
             active_sid = state.session_id or new_sid or sid
+            token_footer = f"{time.strftime('%Y-%m')} tokens: {state.global_tokens:,}"
             if questions:
                 _show_questions(questions, active_sid)
                 if output and output not in ("(빈 응답)",):
                     header = "Claude"
                     if active_sid: header += f" [{active_sid[:8]}]"
-                    send_long(header, output)
+                    send_long(header, output, footer=token_footer)
                 return
             if not output: return
             header = "Claude"
             if active_sid: header += f" [{active_sid[:8]}]"
-            send_long(header, output)
+            send_long(header, output, footer=token_footer)
             log.info("Response sent to Telegram")
         except Exception as e:
             log.error("handle_message error: %s", e, exc_info=True)
@@ -1079,6 +1085,12 @@ def process_update(update):
 def poll_loop():
     offset = 0
     log.info("Bot started.")
+    try:
+        _, g_in, g_out, _ = get_global_usage()
+        state.global_tokens = g_in + g_out
+        log.info("Global tokens loaded: %d", state.global_tokens)
+    except Exception:
+        state.global_tokens = 0
     send_html("<b>Claude Code Bot 시작됨</b>\n/help 로 명령어를 확인하세요.")
     while True:
         try:
