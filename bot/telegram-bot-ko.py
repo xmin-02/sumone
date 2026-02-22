@@ -1176,9 +1176,70 @@ def process_update(update):
             text = " ".join(parts)
         handle_message(text)
 
+BOT_COMMANDS = [
+    ("help", "도움말"),
+    ("session", "세션 목록 및 선택"),
+    ("clear", "새 세션 시작"),
+    ("model", "모델 변경 (opus/sonnet/haiku)"),
+    ("cost", "비용 정보"),
+    ("status", "현재 상태 확인"),
+    ("settings", "봇 설정"),
+    ("builtin", "CLI 빌트인 명령어 목록"),
+    ("skills", "OMC 스킬 목록"),
+    ("cancel", "실행 중인 작업 취소"),
+    ("pwd", "현재 작업 디렉토리"),
+    ("cd", "디렉토리 이동"),
+    ("ls", "파일/폴더 목록"),
+    ("update_bot", "봇 업데이트"),
+    ("analyze", "심층 분석 및 디버깅"),
+    ("autopilot", "자율 실행 (아이디어에서 코드까지)"),
+    ("build_fix", "빌드 오류 수정"),
+    ("ccg", "Claude-Codex-Gemini 트리모델 오케스트레이션"),
+    ("code_review", "코드 리뷰"),
+    ("configure_notifications", "알림 설정 (Telegram/Discord/Slack)"),
+    ("deepinit", "코드베이스 초기화"),
+    ("external_context", "외부 문서 검색"),
+    ("hud", "HUD 디스플레이 설정"),
+    ("learn_about_omc", "OMC 사용 패턴 분석"),
+    ("learner", "스킬 추출"),
+    ("mcp_setup", "MCP 서버 설정"),
+    ("note", "노트패드 메모 저장"),
+    ("omc_doctor", "OMC 진단"),
+    ("omc_setup", "OMC 설정"),
+    ("pipeline", "에이전트 체이닝"),
+    ("plan", "전략적 계획 수립"),
+    ("project_session_manager", "프로젝트 세션 관리"),
+    ("ralph", "완료까지 반복 실행"),
+    ("ralph_init", "PRD 초기화"),
+    ("ralplan", "합의 기반 계획"),
+    ("release", "OMC 릴리스"),
+    ("review", "계획 리뷰"),
+    ("sciomc", "병렬 분석"),
+    ("security_review", "보안 리뷰"),
+    ("skill", "스킬 관리"),
+    ("tdd", "테스트 주도 개발"),
+    ("team", "다중 에이전트 협업"),
+    ("trace", "에이전트 추적"),
+    ("ultraqa", "QA 반복 사이클"),
+    ("ultrapilot", "병렬 자율 실행"),
+    ("ultrawork", "최대 병렬 실행"),
+    ("writer_memory", "작가 메모리 시스템"),
+    ("compact", "컨텍스트 압축"),
+]
+
+def _sync_bot_commands():
+    """Register bot commands with BotFather on startup."""
+    try:
+        commands = [{"command": c, "description": d} for c, d in BOT_COMMANDS]
+        tg_api("setMyCommands", {"commands": json.dumps(commands)})
+        log.info("BotFather commands synced (%d commands)", len(commands))
+    except Exception as e:
+        log.warning("Failed to sync commands: %s", e)
+
 def poll_loop():
     offset = 0
     log.info("Bot started.")
+    _sync_bot_commands()
     state.global_tokens = _get_monthly_tokens()
     log.info("Monthly tokens loaded: %d", state.global_tokens)
     send_html("<b>Claude Code Bot 시작됨</b>\n/help 로 명령어를 확인하세요.")

@@ -1176,9 +1176,70 @@ def process_update(update):
             text = " ".join(parts)
         handle_message(text)
 
+BOT_COMMANDS = [
+    ("help", "Help"),
+    ("session", "Session list & select"),
+    ("clear", "New session"),
+    ("model", "Change model (opus/sonnet/haiku)"),
+    ("cost", "Cost info"),
+    ("status", "Current status"),
+    ("settings", "Bot settings"),
+    ("builtin", "CLI built-in commands"),
+    ("skills", "OMC skills"),
+    ("cancel", "Cancel running task"),
+    ("pwd", "Working directory"),
+    ("cd", "Change directory"),
+    ("ls", "List files/folders"),
+    ("update_bot", "Update bot"),
+    ("analyze", "Deep analysis & debugging"),
+    ("autopilot", "Autonomous execution"),
+    ("build_fix", "Fix build errors"),
+    ("ccg", "Claude-Codex-Gemini tri-model orchestration"),
+    ("code_review", "Code review"),
+    ("configure_notifications", "Notification settings"),
+    ("deepinit", "Codebase initialization"),
+    ("external_context", "External document search"),
+    ("hud", "HUD display settings"),
+    ("learn_about_omc", "OMC usage pattern analysis"),
+    ("learner", "Skill extraction"),
+    ("mcp_setup", "MCP server setup"),
+    ("note", "Save notepad memo"),
+    ("omc_doctor", "OMC diagnostics"),
+    ("omc_setup", "OMC setup"),
+    ("pipeline", "Agent chaining"),
+    ("plan", "Strategic planning"),
+    ("project_session_manager", "Project session management"),
+    ("ralph", "Repeat until completion"),
+    ("ralph_init", "PRD initialization"),
+    ("ralplan", "Consensus-based planning"),
+    ("release", "OMC release"),
+    ("review", "Plan review"),
+    ("sciomc", "Parallel analysis"),
+    ("security_review", "Security review"),
+    ("skill", "Skill management"),
+    ("tdd", "Test-driven development"),
+    ("team", "Multi-agent collaboration"),
+    ("trace", "Agent tracing"),
+    ("ultraqa", "QA repeat cycle"),
+    ("ultrapilot", "Parallel autonomous execution"),
+    ("ultrawork", "Maximum parallel execution"),
+    ("writer_memory", "Writer memory system"),
+    ("compact", "Context compaction"),
+]
+
+def _sync_bot_commands():
+    """Register bot commands with BotFather on startup."""
+    try:
+        commands = [{"command": c, "description": d} for c, d in BOT_COMMANDS]
+        tg_api("setMyCommands", {"commands": json.dumps(commands)})
+        log.info("BotFather commands synced (%d commands)", len(commands))
+    except Exception as e:
+        log.warning("Failed to sync commands: %s", e)
+
 def poll_loop():
     offset = 0
     log.info("Bot started.")
+    _sync_bot_commands()
     state.global_tokens = _get_monthly_tokens()
     log.info("Monthly tokens loaded: %d", state.global_tokens)
     send_html("<b>Claude Code Bot started</b>\nSend /help to see available commands.")
