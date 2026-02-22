@@ -20,9 +20,9 @@ A Telegram bot that bridges your phone to a running Claude Code CLI session. Sen
 - **Model switching** — `/model opus`, `/model sonnet`, `/model haiku`
 - **File & image analysis** — Attach photos or documents, Claude analyzes them automatically
 - **Real-time status** — See what Claude is doing (reading files, running commands, searching code...)
-- **Cost tracking** — Per-request and cumulative cost display
+- **Cost tracking** — Per-request and bot-session cumulative cost display (bot and CLI costs are tracked separately; billing is unified on your Anthropic account)
 - **Interactive questions** — When Claude asks a question, pick an option by number
-- **Skill commands** — Use OMC skills (`/autopilot`, `/plan`, `/code-review`, etc.) directly from Telegram
+- **Slash commands** — Use Claude Code slash commands (`/compact`, `/review`, etc.) directly from Telegram
 - **Auto-start on boot** — systemd (Linux), launchd (macOS), Task Scheduler (Windows), .bashrc (WSL)
 - **Zero dependencies** — Pure Python, no pip packages required
 
@@ -73,7 +73,6 @@ Once running, open Telegram and send `/help` to your bot.
 | `/status` | Show bot status (session, model, state) |
 | `/cancel` | Cancel currently running Claude process |
 | `/builtin` | List CLI built-in commands |
-| `/skills` | List available OMC skills |
 
 ### Passthrough Commands
 
@@ -86,34 +85,24 @@ These are forwarded directly to Claude Code CLI:
 | `/review` | Code review |
 | `/security-review` | Security review |
 
-### OMC Skills (if installed)
-
-| Command | Description |
-|---|---|
-| `/autopilot` | Autonomous execution |
-| `/plan` | Strategic planning |
-| `/code-review` | Comprehensive code review |
-| `/ultrawork` | Maximum parallelism |
-| `/team` | Multi-agent collaboration |
-
 ## Usage Examples
 
 ```
 # Ask a question
-mutation.go 파일 분석해줘
-
-# Run a skill
-/autopilot 로그인 기능 만들어줘
+Analyze the mutation.go file
 
 # Switch model
 /model opus
 
 # Attach a screenshot and ask
-(attach image) 이 에러 메시지 해결해줘
+(attach image) Fix this error message
 
 # Resume previous session
 /session
 > 3  (pick by number)
+
+# Compress context when conversation gets long
+/compact
 ```
 
 ## How It Works
@@ -248,9 +237,9 @@ MIT License. See [LICENSE](LICENSE) for details.
 - **모델 전환** — `/model opus`, `/model sonnet`, `/model haiku`
 - **파일 & 이미지 분석** — 사진이나 문서를 첨부하면 Claude가 자동으로 분석
 - **실시간 상태 표시** — Claude가 뭘 하고 있는지 표시 (파일 읽기, 명령 실행, 코드 검색 등)
-- **비용 추적** — 요청별/누적 비용 표시
+- **비용 추적** — 요청별/봇 세션 누적 비용 표시 (봇과 CLI 비용은 별도 추적되며, 과금은 Anthropic 계정에서 통합)
 - **대화형 질문** — Claude가 질문하면 번호로 선택
-- **스킬 명령어** — OMC 스킬 (`/autopilot`, `/plan`, `/code-review` 등)을 텔레그램에서 직접 사용
+- **슬래시 명령어** — Claude Code 슬래시 명령어 (`/compact`, `/review` 등)를 텔레그램에서 직접 사용
 - **부팅 시 자동 시작** — systemd (Linux), launchd (macOS), 작업 스케줄러 (Windows), .bashrc (WSL)
 - **외부 의존성 없음** — 순수 Python, pip 패키지 불필요
 
@@ -301,7 +290,6 @@ powershell -ExecutionPolicy Bypass -File setup-claude-telegram-bot.ps1
 | `/status` | 봇 상태 (세션, 모델, 상태) |
 | `/cancel` | 실행 중인 Claude 프로세스 취소 |
 | `/builtin` | CLI 빌트인 명령어 목록 |
-| `/skills` | 사용 가능한 OMC 스킬 목록 |
 
 ### Claude에 전달되는 명령어
 
@@ -312,24 +300,11 @@ powershell -ExecutionPolicy Bypass -File setup-claude-telegram-bot.ps1
 | `/review` | 코드 리뷰 |
 | `/security-review` | 보안 리뷰 |
 
-### OMC 스킬 (설치된 경우)
-
-| 명령어 | 설명 |
-|---|---|
-| `/autopilot` | 자율 실행 |
-| `/plan` | 전략적 계획 |
-| `/code-review` | 종합 코드 리뷰 |
-| `/ultrawork` | 최대 병렬 실행 |
-| `/team` | 다중 에이전트 협업 |
-
 ## 사용 예시
 
 ```
 # 질문하기
 mutation.go 파일 분석해줘
-
-# 스킬 실행
-/autopilot 로그인 기능 만들어줘
 
 # 모델 변경
 /model opus
@@ -340,6 +315,9 @@ mutation.go 파일 분석해줘
 # 이전 세션 이어가기
 /session
 > 3  (번호로 선택)
+
+# 대화가 길어지면 컨텍스트 압축
+/compact
 ```
 
 ## 작동 방식
