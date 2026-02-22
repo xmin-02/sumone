@@ -690,6 +690,8 @@ def handle_skills():
         "  /omc-setup — OMC setup\n  /omc-doctor — OMC diagnostics\n  /mcp-setup — MCP setup\n"
         "  /ralph-init — PRD initialization\n  /configure-notifications — Notification settings\n"
         "  /learn-about-omc — Usage pattern analysis\n  /cancel — Cancel execution mode\n"
+        "\n<b>Bot Management</b>\n"
+        "  /update_bot — Auto-update bot (download latest from GitHub)\n"
         + '━'*25 + "\n<i>Example: /autopilot build a login feature</i>")
     send_html(msg)
 
