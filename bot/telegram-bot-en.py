@@ -628,8 +628,31 @@ def handle_status():
            f"Session: {session_info}\nModel: {model_info}\nStatus: {busy_info}\nOS: {escape_html(os_info)}\n")
     send_html(msg)
 
+def _fetch_patch_notes():
+    current_path = os.path.abspath(__file__)
+    local_mtime = os.path.getmtime(current_path)
+    since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(local_mtime))
+    file_path = f"bot/telegram-bot-{LANG}.py"
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?path={file_path}&since={since}&per_page=20"
+    try:
+        req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github.v3+json"})
+        resp = urllib.request.urlopen(req, timeout=10)
+        commits = json.loads(resp.read().decode())
+        if not commits:
+            return "Changes detected"
+        notes = []
+        for c in commits:
+            msg = c.get("commit", {}).get("message", "").split("\n")[0].strip()
+            if msg and msg not in notes:
+                notes.append(msg)
+        if not notes:
+            return "Changes detected"
+        return "\n".join(f"- {n}" for n in notes[:10])
+    except Exception:
+        return "Changes detected"
+
 def handle_update_bot():
-    send_html(f"<i>Checking for updates...</i>")
+    send_html("<i>Checking for updates...</i>")
     bot_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/bot/telegram-bot-{LANG}.py"
     current_path = os.path.abspath(__file__)
     new_path = current_path + ".new"
@@ -643,8 +666,9 @@ def handle_update_bot():
             os.remove(new_path)
             send_html("<b>Already up to date.</b>")
             return
+        patch_notes = _fetch_patch_notes()
         os.replace(new_path, current_path)
-        send_html("<b>Update complete! Restarting...</b>")
+        send_html(f"<b>Update complete!</b>\n{'━'*25}\n{escape_html(patch_notes)}\n{'━'*25}\n<i>Restarting...</i>")
         time.sleep(1)
         os.execv(sys.executable, [sys.executable, current_path])
     except Exception as e:
