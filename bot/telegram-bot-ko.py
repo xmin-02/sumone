@@ -50,7 +50,10 @@ DEFAULT_SETTINGS = {
     "show_cost": False,
     "show_status": True,
     "show_global_cost": True,
+    "token_display": "month",
 }
+TOKEN_PERIODS = ["session", "day", "month", "year", "total"]
+TOKEN_LABELS = {"session": "세션", "day": "일", "month": "월", "year": "년", "total": "전체"}
 settings = {**DEFAULT_SETTINGS, **_config.get("settings", {})}
 
 MAX_MSG_LEN = 3900
@@ -511,6 +514,70 @@ def _get_monthly_tokens():
     except Exception:
         return 0
 
+_token_cache = {}
+_PROJ_DIR = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+
+def _scan_jsonl_tokens(fpath):
+    total = 0
+    try:
+        with open(fpath) as f:
+            for line in f:
+                if '"assistant"' not in line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                if e.get("type") != "assistant":
+                    continue
+                u = e.get("message", {}).get("usage", {})
+                total += u.get("input_tokens", 0) + u.get("output_tokens", 0) + \
+                         u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
+    except Exception:
+        pass
+    return total
+
+def _get_tokens(period):
+    import glob
+    if period == "month":
+        return _get_monthly_tokens()
+    if period == "session":
+        sid = state.session_id
+        if not sid:
+            return 0
+        for proj in glob.glob(os.path.join(_PROJ_DIR, "*")):
+            fp = os.path.join(proj, f"{sid}.jsonl")
+            if os.path.exists(fp):
+                return _scan_jsonl_tokens(fp)
+        return 0
+    cache_key = f"{period}:{time.strftime('%Y-%m-%d')}"
+    cached = _token_cache.get(cache_key)
+    if cached and time.time() - cached[1] < 60:
+        return cached[0]
+    total = 0
+    today = time.strftime("%Y-%m-%d")
+    year = time.strftime("%Y")
+    for proj in glob.glob(os.path.join(_PROJ_DIR, "*")):
+        for fp in glob.glob(os.path.join(proj, "*.jsonl")):
+            try:
+                mt = time.localtime(os.path.getmtime(fp))
+                if period == "day" and time.strftime("%Y-%m-%d", mt) != today:
+                    continue
+                if period == "year" and time.strftime("%Y", mt) != year:
+                    continue
+                total += _scan_jsonl_tokens(fp)
+            except Exception:
+                continue
+    _token_cache[cache_key] = (total, time.time())
+    return total
+
+def _token_footer():
+    period = settings.get("token_display", "month")
+    count = _get_tokens(period)
+    labels = {"session": "session", "day": time.strftime("%Y-%m-%d"),
+              "month": time.strftime("%Y-%m"), "year": time.strftime("%Y"), "total": "total"}
+    return f"{labels[period]} tokens: {count:,}"
+
 def get_global_usage():
     total_cost = 0.0
     total_input = 0
@@ -826,6 +893,12 @@ def _settings_keyboard():
     for key, label, desc in SETTINGS_KEYS:
         mark = "ON" if settings[key] else "OFF"
         rows.append([{"text": f"[{mark}]  {label}", "callback_data": f"stg:{key}"}])
+    cur = settings.get("token_display", "month")
+    token_row = []
+    for k in TOKEN_PERIODS:
+        label = f"[{TOKEN_LABELS[k]}]" if k == cur else TOKEN_LABELS[k]
+        token_row.append({"text": label, "callback_data": f"stg:td:{k}"})
+    rows.append(token_row)
     rows.append([{"text": "닫기", "callback_data": "stg:close"}])
     return json.dumps({"inline_keyboard": rows})
 
@@ -834,6 +907,9 @@ def _settings_text():
     for key, label, desc in SETTINGS_KEYS:
         mark = "ON " if settings[key] else "OFF"
         lines.append(f"  <code>[{mark}]</code> <b>{escape_html(label)}</b>\n          <i>{escape_html(desc)}</i>")
+    cur = settings.get("token_display", "month")
+    period_str = " / ".join(f"<b>{v}</b>" if k == cur else v for k, v in TOKEN_LABELS.items())
+    lines.append(f"  <code>[{TOKEN_LABELS[cur]:^3}]</code> <b>토큰 표시 범위</b>\n          <i>{period_str}</i>")
     body = "\n\n".join(lines)
     return f"<b>Settings</b>\n{'━'*25}\n\n{body}\n\n{'━'*25}\n<i>항목을 눌러 전환</i>"
 
@@ -852,19 +928,27 @@ def handle_settings_callback(callback_id, msg_id, data):
         tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         return
-    if key in settings:
+    if key.startswith("td:"):
+        new_period = key.split(":", 1)[1]
+        if new_period in TOKEN_PERIODS:
+            settings["token_display"] = new_period
+            _save_settings()
+            tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": f"토큰: {TOKEN_LABELS[new_period]}"})
+    elif key in settings:
         settings[key] = not settings[key]
         _save_settings()
         status = "ON" if settings[key] else "OFF"
         label = next((l for k, l, d in SETTINGS_KEYS if k == key), key)
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": f"{label}: {status}"})
-        tg_api("editMessageText", {
-            "chat_id": CHAT_ID,
-            "message_id": msg_id,
-            "text": _settings_text(),
-            "parse_mode": "HTML",
-            "reply_markup": _settings_keyboard(),
-        })
+    else:
+        return
+    tg_api("editMessageText", {
+        "chat_id": CHAT_ID,
+        "message_id": msg_id,
+        "text": _settings_text(),
+        "parse_mode": "HTML",
+        "reply_markup": _settings_keyboard(),
+    })
 
 def handle_pwd():
     send_html(f"<b>작업 디렉토리</b>\n<code>{escape_html(WORK_DIR)}</code>")
@@ -1010,7 +1094,7 @@ def handle_message(text):
                 _save_session_id(new_sid)
                 log.info("Auto-connected to session: %s", new_sid)
             active_sid = state.session_id or new_sid or sid
-            token_footer = f"{time.strftime('%Y-%m')} tokens: {_get_monthly_tokens():,}"
+            token_footer = _token_footer()
             if questions:
                 _show_questions(questions, active_sid)
                 if output and output not in ("(빈 응답)",):
