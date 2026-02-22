@@ -695,6 +695,7 @@ def handle_builtin():
         "<b>봇에서 동작</b>\n"
         "  /clear — 대화 초기화\n  /cost — 비용 확인\n  /model — 모델 변경/확인\n"
         "  /session — 세션 선택\n  /status — 상태 확인\n  /cancel — 작업 취소\n"
+        "  /pwd — 현재 작업 디렉토리\n  /cd — 디렉토리 이동\n  /ls — 파일 목록\n"
         "  /update_bot — 봇 자동 업데이트 (GitHub에서 최신 코드 다운로드)\n"
         "\n<b>Claude에 전달됨</b>\n"
         "  /compact — 컨텍스트 압축\n  /context — 컨텍스트 사용량\n  /init — 프로젝트 초기화\n"
@@ -760,6 +761,71 @@ def handle_help():
         "<code>/code_review prog/rand.go</code>\n\n"
         + '━'*25 + f"\n세션: {session_info} | 모델: <code>{model_info}</code>\n")
     send_html(msg)
+
+def handle_pwd():
+    send_html(f"<b>작업 디렉토리</b>\n<code>{escape_html(WORK_DIR)}</code>")
+
+def handle_cd(text):
+    global WORK_DIR
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        send_html(f"<b>현재:</b> <code>{escape_html(WORK_DIR)}</code>\n<b>사용법:</b> /cd 경로")
+        return
+    target = parts[1].strip()
+    if target == "~":
+        target = os.path.expanduser("~")
+    elif target == "-":
+        target = getattr(state, "prev_dir", WORK_DIR)
+    elif target == "..":
+        target = os.path.dirname(WORK_DIR)
+    elif not os.path.isabs(target):
+        target = os.path.join(WORK_DIR, target)
+    target = os.path.normpath(target)
+    if not os.path.isdir(target):
+        send_html(f"<b>오류:</b> 디렉토리를 찾을 수 없습니다\n<code>{escape_html(target)}</code>")
+        return
+    state.prev_dir = WORK_DIR
+    WORK_DIR = target
+    send_html(f"<b>이동 완료</b>\n<code>{escape_html(WORK_DIR)}</code>")
+
+def handle_ls(text):
+    parts = text.split(maxsplit=1)
+    target = parts[1].strip() if len(parts) > 1 and parts[1].strip() else WORK_DIR
+    if not os.path.isabs(target):
+        target = os.path.join(WORK_DIR, target)
+    target = os.path.normpath(target)
+    if not os.path.isdir(target):
+        send_html(f"<b>오류:</b> 디렉토리를 찾을 수 없습니다\n<code>{escape_html(target)}</code>")
+        return
+    try:
+        entries = os.listdir(target)
+    except PermissionError:
+        send_html(f"<b>오류:</b> 접근 권한이 없습니다\n<code>{escape_html(target)}</code>")
+        return
+    dirs = []; files = []
+    for name in sorted(entries, key=str.lower):
+        full = os.path.join(target, name)
+        if os.path.isdir(full):
+            dirs.append(f"📁 {name}/")
+        else:
+            try:
+                size = os.path.getsize(full)
+                if size < 1024: s = f"{size}B"
+                elif size < 1048576: s = f"{size/1024:.1f}K"
+                else: s = f"{size/1048576:.1f}M"
+                files.append(f"📄 {name}  ({s})")
+            except Exception:
+                files.append(f"📄 {name}")
+    if not dirs and not files:
+        send_html(f"<b>{escape_html(os.path.basename(target))}/</b>\n(빈 디렉토리)")
+        return
+    lines = dirs + files
+    total = len(lines)
+    if total > 50:
+        lines = lines[:50]
+        lines.append(f"... 외 {total - 50}개")
+    body = "\n".join(escape_html(l) for l in lines)
+    send_html(f"<b>{escape_html(target)}</b>\n<pre>{body}</pre>\n<i>{len(dirs)}개 폴더, {len(files)}개 파일</i>")
 
 def handle_cancel():
     with state.lock: proc = state.claude_proc; was_busy = state.busy
@@ -888,6 +954,9 @@ def process_update(update):
     elif lower == "/skills": handle_skills()
     elif lower in ("/help", "/start"): handle_help()
     elif lower == "/cancel": handle_cancel()
+    elif lower == "/pwd": handle_pwd()
+    elif lower.startswith("/cd"): handle_cd(text)
+    elif lower.startswith("/ls"): handle_ls(text)
     elif lower in ("/update_bot", "/update"): handle_update_bot()
     elif state.answering: handle_answer(text)
     elif state.selecting: handle_selection(text)
