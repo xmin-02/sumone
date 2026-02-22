@@ -1088,7 +1088,26 @@ def handle_message(text):
         if state.busy:
             send_html("<i>Claude가 처리 중입니다. /cancel 로 취소할 수 있습니다.</i>"); return
         state.busy = True
-    ack_id = send_html("<i>요청 접수됨. /cancel 로 언제든 취소 가능합니다.</i>")
+    # Animated typing indicator (with cancel hint)
+    typing_id = [None]
+    typing_stop = threading.Event()
+    r = send_html("<b>입력중 ·</b>\n<i>/cancel 로 취소</i>")
+    try: typing_id[0] = r
+    except Exception: pass
+    def _typing_anim():
+        dots = ["·", "··", "···"]
+        i = 0
+        while not typing_stop.is_set():
+            typing_stop.wait(0.1)
+            if typing_stop.is_set(): break
+            i = (i + 1) % len(dots)
+            if typing_id[0]:
+                tg_api("editMessageText", {
+                    "chat_id": CHAT_ID, "message_id": typing_id[0],
+                    "text": f"<b>입력중 {dots[i]}</b>\n<i>/cancel 로 취소</i>",
+                    "parse_mode": "HTML",
+                })
+    threading.Thread(target=_typing_anim, daemon=True).start()
     send_typing()
     sid = state.session_id
     def _run():
@@ -1103,7 +1122,8 @@ def handle_message(text):
                 log.info("Auto-connected to session: %s", new_sid)
             active_sid = state.session_id or new_sid or sid
             token_footer = _token_footer()
-            delete_msg(ack_id)
+            typing_stop.set()
+            delete_msg(typing_id[0])
             if questions:
                 _show_questions(questions, active_sid)
                 if output and output not in ("(빈 응답)",):
@@ -1118,7 +1138,8 @@ def handle_message(text):
             log.info("Response sent to Telegram")
         except Exception as e:
             log.error("handle_message error: %s", e, exc_info=True)
-            delete_msg(ack_id)
+            typing_stop.set()
+            delete_msg(typing_id[0])
             send_html(f"<i>오류: {escape_html(str(e))}</i>")
         finally:
             with state.lock: state.busy = False
