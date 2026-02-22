@@ -1,172 +1,24 @@
-#!/usr/bin/env bash
-# ============================================================================
-# Setup script for Telegram Claude Code bot
-# Installs a bot for remote Claude Code interaction via Telegram.
-#
-# Supported OS: Linux, macOS, Windows (WSL)
-# Requirements: Python 3.8+, Claude Code CLI (claude)
-# ============================================================================
-set -euo pipefail
-
-# ---------------------------------------------------------------------------
-# Colors
-# ---------------------------------------------------------------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-info()  { echo -e "${CYAN}[INFO]${NC} $*"; }
-ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-err()   { echo -e "${RED}[ERROR]${NC} $*"; }
-
-# ---------------------------------------------------------------------------
-# OS Detection
-# ---------------------------------------------------------------------------
-detect_os() {
-    case "$(uname -s)" in
-        Linux*)
-            if grep -qi microsoft /proc/version 2>/dev/null; then
-                OS="wsl"
-            else
-                OS="linux"
-            fi
-            ;;
-        Darwin*)  OS="macos" ;;
-        MINGW*|MSYS*|CYGWIN*) OS="windows-git-bash" ;;
-        *)        OS="unknown" ;;
-    esac
-    echo "$OS"
-}
-
-# ---------------------------------------------------------------------------
-# Prerequisites check
-# ---------------------------------------------------------------------------
-check_prerequisites() {
-    info "Checking required programs..."
-
-    # Python 3
-    if command -v python3 &>/dev/null; then
-        PYTHON="python3"
-    elif command -v python &>/dev/null && python --version 2>&1 | grep -q "Python 3"; then
-        PYTHON="python"
-    else
-        err "Python 3 is not installed."
-        echo "  - Linux: sudo apt install python3"
-        echo "  - macOS: brew install python3"
-        echo "  - Windows: https://python.org/downloads/"
-        exit 1
-    fi
-    ok "Python: $($PYTHON --version)"
-
-    # Claude CLI
-    if command -v claude &>/dev/null; then
-        ok "Claude CLI: $(claude --version 2>/dev/null || echo 'installed')"
-    else
-        warn "Claude CLI is not installed."
-        echo ""
-        echo "How to install Claude CLI:"
-        echo "  npm install -g @anthropic-ai/claude-code"
-        echo ""
-        read -rp "$(echo -e "${YELLOW}Continue without Claude CLI? (y/N): ${NC}")" yn
-        case "$yn" in
-            [yY]*) warn "You will need to install Claude CLI later for the bot to work." ;;
-            *)     echo "Please install it and run this script again."; exit 0 ;;
-        esac
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# User input
-# ---------------------------------------------------------------------------
-get_user_input() {
-    echo ""
-    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${BOLD} Telegram Bot Configuration${NC}"
-    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-    echo "1. Create a bot with @BotFather and get the token"
-    echo "   Telegram → @BotFather → /newbot → copy token"
-    echo ""
-    echo "2. Get your Chat ID from @userinfobot"
-    echo "   Telegram → @userinfobot → /start → copy ID"
-    echo ""
-
-    # Bot Token
-    while true; do
-        read -rp "$(echo -e "${CYAN}Bot Token: ${NC}")" BOT_TOKEN
-        if [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
-            break
-        fi
-        err "Invalid token format. (e.g. 123456789:ABCdef...)"
-    done
-
-    # Chat ID
-    while true; do
-        read -rp "$(echo -e "${CYAN}Chat ID: ${NC}")" CHAT_ID
-        if [[ "$CHAT_ID" =~ ^-?[0-9]+$ ]]; then
-            break
-        fi
-        err "Invalid Chat ID. (numbers only)"
-    done
-
-    # Working directory
-    DEFAULT_WORKDIR="$HOME"
-    read -rp "$(echo -e "${CYAN}Working directory [$DEFAULT_WORKDIR]: ${NC}")" WORK_DIR
-    WORK_DIR="${WORK_DIR:-$DEFAULT_WORKDIR}"
-    if [[ ! -d "$WORK_DIR" ]]; then
-        err "Directory does not exist: $WORK_DIR"
-        exit 1
-    fi
-
-    echo ""
-    info "Configuration summary:"
-    echo "  Bot Token: ${BOT_TOKEN:0:10}..."
-    echo "  Chat ID:   $CHAT_ID"
-    echo "  Working directory: $WORK_DIR"
-    echo ""
-    read -rp "$(echo -e "${YELLOW}Proceed with this configuration? (Y/n): ${NC}")" confirm
-    case "$confirm" in
-        [nN]*) echo "Cancelled."; exit 0 ;;
-    esac
-}
-
-# ---------------------------------------------------------------------------
-# Install bot script
-# ---------------------------------------------------------------------------
-INSTALL_DIR=""
-BOT_PATH=""
-
-install_bot() {
-    INSTALL_DIR="$HOME/.claude-telegram-bot"
-    BOT_PATH="$INSTALL_DIR/telegram-bot.py"
-
-    mkdir -p "$INSTALL_DIR"
-    info "Installing bot script: $BOT_PATH"
-
-    cat > "$BOT_PATH" << 'BOTSCRIPT'
 #!/usr/bin/env python3
-"""Telegram bot for bidirectional Claude Code interaction.
+"""Telegram bot for bidirectional Claude Code interaction (Windows + Linux/macOS).
 
 Commands:
-  /session  - List recent sessions, enter selection mode
-  /clear    - Clear session, start fresh
-  /model    - Change or show current model
-  /cost     - Show cost info
-  /status   - Show bot status
-  /builtin  - List CLI built-in commands
-  /skills   - List OMC skills
-  /help     - Usage guide
-  /cancel   - Cancel running claude process
-  <number>  - (During selection/answering) Select that option
-  <text>    - Send message to Claude via CLI
+  /session    - List recent sessions, enter selection mode
+  /clear      - Clear session, start fresh
+  /model      - Change or show current model
+  /cost       - Show cost info
+  /status     - Show bot status
+  /builtin    - List CLI built-in commands
+  /skills     - List OMC skills
+  /help       - Usage guide
+  /cancel     - Cancel running claude process
+  /update_bot - Auto-update bot from GitHub
+  <number>    - (During selection/answering) Select that option
+  <text>      - Send message to Claude via CLI
 """
 import json
 import logging
 import os
+import platform
 import re
 import signal
 import subprocess
@@ -177,10 +29,23 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-# --- Config (replaced by setup script) ---
-BOT_TOKEN = "%%BOT_TOKEN%%"
-CHAT_ID = "%%CHAT_ID%%"
-WORK_DIR = "%%WORK_DIR%%"
+IS_WINDOWS = platform.system() == "Windows"
+
+# --- Config (loaded from config.json) ---
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
+
+def load_config():
+    with open(CONFIG_FILE, encoding="utf-8") as f:
+        return json.load(f)
+
+_config = load_config()
+BOT_TOKEN = _config["bot_token"]
+CHAT_ID = str(_config["chat_id"])
+WORK_DIR = _config.get("work_dir", os.path.expanduser("~"))
+LANG = _config.get("lang", "ko")
+GITHUB_REPO = _config.get("github_repo", "xmin-02/Claude-telegram-bot")
+
 MAX_MSG_LEN = 3900
 MAX_PARTS = 5
 POLL_TIMEOUT = 30
@@ -312,7 +177,7 @@ def send_typing():
     tg_api("sendChatAction", {"chat_id": CHAT_ID, "action": "typing"})
 
 # --- File download from Telegram ---
-DOWNLOAD_DIR = os.path.expanduser("~/.claude-telegram-bot/downloads")
+DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
 
 def download_tg_file(file_id, filename=None):
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -341,21 +206,26 @@ def build_file_prompt(local_path, caption=""):
     ext = os.path.splitext(local_path)[1].lower()
     fname = os.path.basename(local_path)
     if ext in IMAGE_EXTS:
-        prompt = f"Please analyze this image file: {local_path}"
-        if caption: prompt = f"{caption}\n\nFile: {local_path}"
+        prompt = f"이 이미지 파일을 분석해줘: {local_path}"
+        if caption: prompt = f"{caption}\n\n파일: {local_path}"
         return prompt
     if ext in TEXT_EXTS or ext == "":
         try:
             with open(local_path, "r", errors="replace") as f:
                 content = f.read(50000)
-            truncated = " (partially included)" if len(content) >= 50000 else ""
-            return f"{caption or 'Please analyze this file content'}\n\n--- {fname}{truncated} ---\n{content}"
+            truncated = " (일부만 포함됨)" if len(content) >= 50000 else ""
+            return f"{caption or '이 파일 내용을 분석해줘'}\n\n--- {fname}{truncated} ---\n{content}"
         except Exception: pass
-    return f"{caption or 'Please analyze this file'}\n\nFile path: {local_path}"
+    return f"{caption or '이 파일을 분석해줘'}\n\n파일 경로: {local_path}"
 
 # --- Session listing ---
 def _find_project_dirs():
-    claude_proj = os.path.expanduser("~/.claude/projects")
+    if IS_WINDOWS:
+        claude_proj = os.path.join(os.environ.get("APPDATA", ""), "claude", "projects")
+        if not os.path.isdir(claude_proj):
+            claude_proj = os.path.expanduser("~/.claude/projects")
+    else:
+        claude_proj = os.path.expanduser("~/.claude/projects")
     if not os.path.isdir(claude_proj): return []
     dirs = []
     for name in os.listdir(claude_proj):
@@ -380,7 +250,7 @@ def get_sessions(limit=10):
 
 def _get_first_user_message(fpath):
     try:
-        with open(fpath) as f:
+        with open(fpath, encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if not line: continue
@@ -393,7 +263,7 @@ def _get_first_user_message(fpath):
                     text = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.DOTALL).strip()
                     if text: return text[:80]
     except Exception: pass
-    return "(no preview)"
+    return "(미리보기 없음)"
 
 def _extract_text(content):
     if isinstance(content, str) and content.strip(): return content.strip()
@@ -425,11 +295,25 @@ def _get_session_model(session_id):
     return None
 
 # --- Claude CLI ---
+def _find_claude_cmd():
+    """Find the claude CLI executable (handles Windows .cmd wrapper)."""
+    for cmd in ["claude", "claude.cmd"]:
+        try:
+            result = subprocess.run(
+                [cmd, "--version"], capture_output=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0,
+            )
+            if result.returncode == 0: return cmd
+        except Exception: continue
+    return "claude"  # fallback
+
+CLAUDE_CMD = _find_claude_cmd()
+
 TOOL_LABELS = {
-    "Read": "Reading file", "Edit": "Editing file", "Write": "Creating file",
-    "Bash": "Running command", "Grep": "Searching code", "Glob": "Browsing files",
-    "Task": "Running agent", "WebFetch": "Fetching web page", "WebSearch": "Searching web",
-    "AskUserQuestion": "Generating question", "TodoWrite": "Updating task list",
+    "Read": "파일 읽는 중", "Edit": "파일 수정 중", "Write": "파일 생성 중",
+    "Bash": "명령어 실행 중", "Grep": "코드 검색 중", "Glob": "파일 탐색 중",
+    "Task": "에이전트 실행 중", "WebFetch": "웹 조회 중", "WebSearch": "웹 검색 중",
+    "AskUserQuestion": "질문 생성 중", "TodoWrite": "작업 목록 업데이트",
 }
 
 def _send_intermediate(text):
@@ -459,22 +343,25 @@ def _describe_tool(event):
             todos = inp.get("todos", [])
             in_prog = [t for t in todos if t.get("status") == "in_progress"]
             if in_prog: label += f": {in_prog[0].get('activeForm', '')[:30]}"
-            else: label += f" ({len(todos)} items)"
+            else: label += f" ({len(todos)}개)"
         return label
     return None
 
 def run_claude(message, session_id=None):
-    cmd = ["claude"]
+    cmd = [CLAUDE_CMD]
     if session_id: cmd += ["-r", session_id]
     cmd += ["-p", message, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"]
     if state.model: cmd += ["--model", state.model]
     log.info("Running: %s", " ".join(cmd[:6]) + "...")
     try:
+        popen_kwargs = dict(
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=WORK_DIR, env=_claude_env(),
+        )
+        if IS_WINDOWS:
+            popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         with state.lock:
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=WORK_DIR, env=_claude_env(),
-            )
+            proc = subprocess.Popen(cmd, **popen_kwargs)
             state.claude_proc = proc
         final_text = []; sent_text_count = 0
         captured_session_id = None; pending_questions = None
@@ -517,7 +404,7 @@ def run_claude(message, session_id=None):
                     desc = _describe_tool(event)
                     if desc:
                         elapsed = int(now - start_time); mins, secs = divmod(elapsed, 60)
-                        t = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+                        t = f"{mins}분 {secs}초" if mins > 0 else f"{secs}초"
                         send_html(f"<i>{escape_html(desc)} ({t})</i>")
                         last_status_time = now; log.info("Status: %s", desc)
             if not captured_session_id:
@@ -539,8 +426,8 @@ def run_claude(message, session_id=None):
                     state.last_cost = cost; state.total_cost += cost
                     dur_s = duration / 1000 if duration else 0
                     mins, secs = divmod(int(dur_s), 60)
-                    dur_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
-                    cost_line = f"\U0001f4b0 ${cost:.4f} | \u23f1 {dur_str} | \U0001f504 {turns} turns | \U0001f4ca {in_tok:,}+{out_tok:,} tokens"
+                    dur_str = f"{mins}분 {secs}초" if mins > 0 else f"{secs}초"
+                    cost_line = f"\U0001f4b0 ${cost:.4f} | \u23f1 {dur_str} | \U0001f504 {turns}턴 | \U0001f4ca {in_tok:,}+{out_tok:,} 토큰"
                     send_html(f"<i>{cost_line}</i>")
         proc.wait(timeout=30)
         stderr_out = proc.stderr.read().decode("utf-8", errors="replace").strip()
@@ -548,31 +435,81 @@ def run_claude(message, session_id=None):
         unsent = final_text[sent_text_count:]
         output = "\n\n".join(unsent).strip()
         if proc.returncode != 0 and not output and sent_text_count == 0:
-            err_msg = f"Error (code {proc.returncode}):\n{stderr_out[:500]}" if stderr_out else f"Error (code {proc.returncode})"
+            err_msg = f"오류 (코드 {proc.returncode}):\n{stderr_out[:500]}" if stderr_out else f"오류 (코드 {proc.returncode})"
             return err_msg, captured_session_id, None
         return output or "", captured_session_id, pending_questions
     except subprocess.TimeoutExpired:
         with state.lock:
             if state.claude_proc: state.claude_proc.kill(); state.claude_proc = None
-        return "Timed out (1 hour limit)", None, None
+        return "시간 초과 (1시간 제한)", None, None
     except Exception as e:
         with state.lock: state.claude_proc = None
-        return f"Error: {e}", None, None
+        return f"오류: {e}", None, None
 
 def _claude_env():
     env = os.environ.copy()
-    env["HOME"] = os.path.expanduser("~")
     env["CLAUDE_TELEGRAM_BOT"] = "1"
     env.pop("CLAUDECODE", None)
-    env["PATH"] = os.path.expanduser("~/.local/bin") + ":/usr/local/bin:/usr/bin:/bin"
-    goroot = os.path.join(WORK_DIR, "goroot")
-    gopath = os.path.join(WORK_DIR, "gopath")
-    if os.path.isdir(goroot):
-        env["GOROOT"] = goroot
-        env["PATH"] = f"{gopath}/bin:{goroot}/bin:{env['PATH']}"
-    if os.path.isdir(gopath):
-        env["GOPATH"] = gopath
+    if IS_WINDOWS:
+        # Windows: ensure npm global bin is in PATH
+        npm_prefix = os.path.join(env.get("APPDATA", ""), "npm")
+        if os.path.isdir(npm_prefix):
+            env["PATH"] = npm_prefix + ";" + env.get("PATH", "")
+        # Add local Python scripts
+        py_scripts = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Programs", "Python", "Scripts")
+        if os.path.isdir(py_scripts):
+            env["PATH"] = py_scripts + ";" + env.get("PATH", "")
+    else:
+        env["HOME"] = os.path.expanduser("~")
+        env["PATH"] = os.path.expanduser("~/.local/bin") + ":/usr/local/bin:/usr/bin:/bin"
+        goroot = os.path.join(WORK_DIR, "goroot")
+        gopath = os.path.join(WORK_DIR, "gopath")
+        if os.path.isdir(goroot):
+            env["GOROOT"] = goroot
+            env["PATH"] = f"{gopath}/bin:{goroot}/bin:{env['PATH']}"
+        if os.path.isdir(gopath):
+            env["GOPATH"] = gopath
     return env
+
+def get_global_usage():
+    total_cost = 0.0
+    total_input = 0
+    total_output = 0
+    session_count = 0
+    for proj_dir in _find_project_dirs():
+        try:
+            entries = os.listdir(proj_dir)
+        except Exception:
+            continue
+        for fname in entries:
+            if not fname.endswith(".jsonl"):
+                continue
+            fpath = os.path.join(proj_dir, fname)
+            session_counted = False
+            try:
+                with open(fpath, encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            e = json.loads(line)
+                        except Exception:
+                            continue
+                        if e.get("type") != "result":
+                            continue
+                        if not session_counted:
+                            session_count += 1
+                            session_counted = True
+                        cost = e.get("total_cost_usd", 0)
+                        if cost:
+                            total_cost += cost
+                        usage = e.get("usage", {})
+                        total_input += usage.get("input_tokens", 0) + usage.get("cache_read_input_tokens", 0)
+                        total_output += usage.get("output_tokens", 0)
+            except Exception:
+                continue
+    return total_cost, total_input, total_output, session_count
 
 # --- Command handlers ---
 def handle_session():
@@ -580,16 +517,16 @@ def handle_session():
     state.session_list = sessions
     state.selecting = True
     if not sessions:
-        send_html("<b>No sessions found.</b>"); return
+        send_html("<b>세션이 없습니다.</b>"); return
     lines = []
     for i, (sid, ts, preview) in enumerate(sessions, 1):
         p = preview[:50] + "..." if len(preview) > 50 else preview
         lines.append(f"<b>{i}.</b> <code>{sid[:8]}</code> {escape_html(ts)}\n    {escape_html(p)}")
     current = ""
-    if state.session_id: current = f"\nCurrent: <code>{state.session_id[:8]}</code>"
-    msg = (f"<b>Recent Sessions</b>{current}\n{'━'*25}\n"
+    if state.session_id: current = f"\n현재: <code>{state.session_id[:8]}</code>"
+    msg = (f"<b>최근 세션</b>{current}\n{'━'*25}\n"
            + "\n".join(lines)
-           + f"\n{'━'*25}\nEnter a number (1-10) or a session UUID.\n/clear to start a new session")
+           + f"\n{'━'*25}\n번호(1-10) 또는 세션 UUID를 입력하세요.\n/clear 새 세션 시작")
     send_html(msg)
 
 def _show_questions(questions, sid):
@@ -609,8 +546,8 @@ def _show_questions(questions, sid):
             lines.append(entry)
             all_options.append({"label": label, "q_idx": qi, "opt_idx": oi})
     body = "\n".join(lines)
-    msg = (f"<b>Claude — Selection Required</b>\n{'━'*25}\n{body}\n{'━'*25}\n"
-           "Enter a number to select an option.")
+    msg = (f"<b>Claude — 선택 필요</b>\n{'━'*25}\n{body}\n{'━'*25}\n"
+           "번호를 입력해서 선택하세요.")
     send_html(msg)
     state.pending_question = {"session_id": sid, "questions": questions, "options_map": all_options}
     state.answering = True
@@ -628,11 +565,11 @@ def handle_answer(text):
             chosen = options_map[idx]; label = chosen["label"]
             state.answering = False; state.pending_question = None
             if sid: state.session_id = sid
-            answer_text = f'I select "{label}".'
+            answer_text = f'"{label}" 을 선택합니다.'
             log.info("Answer: %s (option %d)", label, idx + 1)
             handle_message(answer_text); return
         else:
-            send_html(f"Invalid number. Please enter a value between 1 and {len(options_map)}."); return
+            send_html(f"잘못된 번호입니다. 1-{len(options_map)} 사이를 입력하세요."); return
     state.answering = False; state.pending_question = None
     if sid: state.session_id = sid
     handle_message(text)
@@ -640,125 +577,166 @@ def handle_answer(text):
 def handle_clear():
     state.session_id = None; state.selecting = False
     state.answering = False; state.pending_question = None
-    send_html("<b>Conversation cleared</b>\nStarting a new conversation with no prior context.")
+    send_html("<b>대화 초기화</b>\n이전 맥락 없이 새 대화를 시작합니다.")
 
 def handle_cost():
-    msg = (f"<b>Cost Info</b>\n{'━'*25}\n"
-           f"Last request: ${state.last_cost:.4f}\n"
-           f"Bot session total: ${state.total_cost:.4f}\n")
+    msg = (f"<b>비용 정보</b>\n{'━'*25}\n"
+           f"마지막 요청: ${state.last_cost:.4f}\n"
+           f"봇 세션 누적: ${state.total_cost:.4f}\n")
+    try:
+        g_cost, g_in, g_out, g_sessions = get_global_usage()
+        msg += (f"\n<b>전체 사용량 (모든 세션)</b>\n{'━'*25}\n"
+                f"총 비용: ${g_cost:.4f}\n"
+                f"총 세션: {g_sessions}개\n"
+                f"입력 토큰: {g_in:,}\n"
+                f"출력 토큰: {g_out:,}\n"
+                f"총 토큰: {g_in + g_out:,}\n")
+    except Exception:
+        pass
     send_html(msg)
 
 def handle_model(text):
     parts = text.split(maxsplit=1)
     if len(parts) < 2 or parts[1].strip() == "":
-        current = state.model or "default (sonnet)"
+        current = state.model or "기본값 (sonnet)"
         aliases = ", ".join(sorted(MODEL_ALIASES.keys()))
         send_html(
-            f"<b>Current model:</b> <code>{escape_html(current)}</code>\n{'━'*25}\n"
-            f"<b>Usage:</b> /model [name]\n<b>Aliases:</b> {escape_html(aliases)}\n"
-            f"<b>Examples:</b>\n  /model opus\n  /model sonnet\n  /model haiku\n"
-            f"  /model default — restore default")
+            f"<b>현재 모델:</b> <code>{escape_html(current)}</code>\n{'━'*25}\n"
+            f"<b>사용법:</b> /model [이름]\n<b>단축어:</b> {escape_html(aliases)}\n"
+            f"<b>예시:</b>\n  /model opus\n  /model sonnet\n  /model haiku\n"
+            f"  /model default — 기본값으로 복원")
         return
     name = parts[1].strip().lower()
-    if name in ("default", "reset"):
+    if name in ("default", "reset", "기본", "기본값"):
         state.model = None
-        send_html("<b>Model reset:</b> default (sonnet)"); return
+        send_html("<b>모델 초기화:</b> 기본값 (sonnet)"); return
     resolved = MODEL_ALIASES.get(name)
     if not resolved:
         if name.startswith("claude-"): resolved = name
         else:
             aliases = ", ".join(sorted(MODEL_ALIASES.keys()))
-            send_html(f"Unknown model: <code>{escape_html(name)}</code>\nAvailable: {escape_html(aliases)}"); return
+            send_html(f"알 수 없는 모델: <code>{escape_html(name)}</code>\n사용 가능: {escape_html(aliases)}"); return
     state.model = resolved
-    send_html(f"<b>Model changed:</b> <code>{escape_html(resolved)}</code>")
+    send_html(f"<b>모델 변경됨:</b> <code>{escape_html(resolved)}</code>")
 
 def handle_status():
-    session_info = f"<code>{state.session_id[:8]}</code>" if state.session_id else "None (new session mode)"
-    model_info = f"<code>{escape_html(state.model)}</code>" if state.model else "default (sonnet)"
-    busy_info = "Processing" if state.busy else "Idle"
-    msg = (f"<b>Bot Status</b>\n{'━'*25}\n"
-           f"Session: {session_info}\nModel: {model_info}\nState: {busy_info}\n")
+    session_info = f"<code>{state.session_id[:8]}</code>" if state.session_id else "없음 (새 세션 모드)"
+    model_info = f"<code>{escape_html(state.model)}</code>" if state.model else "기본값 (sonnet)"
+    busy_info = "처리 중" if state.busy else "대기"
+    os_info = f"Windows ({platform.version()})" if IS_WINDOWS else platform.platform()
+    msg = (f"<b>Bot 상태</b>\n{'━'*25}\n"
+           f"세션: {session_info}\n모델: {model_info}\n상태: {busy_info}\nOS: {escape_html(os_info)}\n")
     send_html(msg)
+
+def handle_update_bot():
+    send_html(f"<i>업데이트 확인 중...</i>")
+    bot_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/bot/telegram-bot-{LANG}.py"
+    current_path = os.path.abspath(__file__)
+    new_path = current_path + ".new"
+    try:
+        urllib.request.urlretrieve(bot_url, new_path)
+        with open(current_path, encoding="utf-8") as f:
+            old_content = f.read()
+        with open(new_path, encoding="utf-8") as f:
+            new_content = f.read()
+        if old_content == new_content:
+            os.remove(new_path)
+            send_html("<b>이미 최신 버전입니다.</b>")
+            return
+        os.replace(new_path, current_path)
+        send_html("<b>업데이트 완료! 재시작 중...</b>")
+        time.sleep(1)
+        os.execv(sys.executable, [sys.executable, current_path])
+    except Exception as e:
+        if os.path.exists(new_path):
+            try: os.remove(new_path)
+            except Exception: pass
+        send_html(f"<b>업데이트 실패:</b> {escape_html(str(e))}")
 
 def handle_builtin():
     msg = (
-        "<b>Built-in Commands (CLI)</b>\n" + '━'*25 + "\n"
-        "<b>Handled by bot</b>\n"
-        "  /clear — Clear conversation\n  /cost — Check cost\n  /model — Change/check model\n"
-        "  /session — Select session\n  /status — Check status\n  /cancel — Cancel task\n"
-        "\n<b>Passed to Claude</b>\n"
-        "  /compact — Compress context\n  /context — Context usage\n  /init — Initialize project\n"
-        "  /review — Code review\n  /security-review — Security review\n  /pr-comments — PR comments\n"
-        "  /release-notes — Release notes\n  /insights — Insights\n  /extra-usage — Extra usage\n"
-        "\n<b>CLI only (not supported by bot)</b>\n"
-        "  /config — Change settings\n  /permissions — Permission settings\n  /doctor — Diagnostics\n"
-        "  /login, /logout — Authentication\n  /add-dir — Add directory\n  /agents — Agent settings\n")
+        "<b>빌트인 명령어 (CLI 내장)</b>\n" + '━'*25 + "\n"
+        "<b>봇에서 동작</b>\n"
+        "  /clear — 대화 초기화\n  /cost — 비용 확인\n  /model — 모델 변경/확인\n"
+        "  /session — 세션 선택\n  /status — 상태 확인\n  /cancel — 작업 취소\n"
+        "  /update_bot — 봇 자동 업데이트 (GitHub에서 최신 코드 다운로드)\n"
+        "\n<b>Claude에 전달됨</b>\n"
+        "  /compact — 컨텍스트 압축\n  /context — 컨텍스트 사용량\n  /init — 프로젝트 초기화\n"
+        "  /review — 코드 리뷰\n  /security-review — 보안 리뷰\n  /pr-comments — PR 코멘트\n"
+        "  /release-notes — 릴리스 노트\n  /insights — 인사이트\n  /extra-usage — 추가 사용량\n"
+        "\n<b>CLI 전용 (봇 미지원)</b>\n"
+        "  /config — 설정 변경\n  /permissions — 권한 설정\n  /doctor — 진단\n"
+        "  /login, /logout — 인증\n  /add-dir — 디렉토리 추가\n  /agents — 에이전트 설정\n")
     send_html(msg)
 
 def handle_skills():
     msg = (
-        "<b>Available Skills (OMC)</b>\n" + '━'*25 + "\n"
-        "<b>Execution Modes</b>\n"
-        "  /autopilot — Autonomous execution\n  /ralph — Repeat until complete\n  /ultrawork — Maximum parallelism\n"
-        "  /ultrapilot — Parallel autonomous\n  /ultraqa — QA iteration cycle\n  /team — Multi-agent collaboration\n"
-        "  /pipeline — Agent chaining\n  /ccg — Claude+Codex+Gemini\n"
-        "\n<b>Planning/Analysis</b>\n"
-        "  /plan — Strategic planning\n  /ralplan — Consensus-based planning\n  /review — Plan review\n"
-        "  /analyze — Deep analysis\n  /sciomc — Parallel research\n  /deepinit — Codebase initialization\n"
-        "\n<b>Code Quality</b>\n"
-        "  /code-review — Code review\n  /security-review — Security review\n"
-        "  /tdd — Test-driven development\n  /build-fix — Fix build errors\n"
-        "\n<b>Utilities</b>\n"
-        "  /note — Save a note\n  /learner — Extract skills\n  /skill — Skill management\n"
-        "  /trace — Agent tracing\n  /hud — HUD settings\n  /external-context — External document search\n"
-        "  /writer-memory — Writer memory\n"
-        "\n<b>Configuration/Management</b>\n"
-        "  /omc-setup — OMC setup\n  /omc-doctor — OMC diagnostics\n  /mcp-setup — MCP setup\n"
-        "  /ralph-init — PRD initialization\n  /configure-notifications — Notification settings\n"
-        "  /learn-about-omc — Usage pattern analysis\n  /cancel — Cancel execution mode\n"
-        + '━'*25 + "\n<i>Example: /autopilot build a login feature</i>")
+        "<b>사용 가능한 스킬 (OMC)</b>\n" + '━'*25 + "\n"
+        "<b>실행 모드</b>\n"
+        "  /autopilot — 자율 실행\n  /ralph — 완료까지 반복\n  /ultrawork — 최대 병렬\n"
+        "  /ultrapilot — 병렬 자율\n  /ultraqa — QA 반복 사이클\n  /team — 다중 에이전트 협업\n"
+        "  /pipeline — 에이전트 체이닝\n  /ccg — Claude+Codex+Gemini\n"
+        "\n<b>계획/분석</b>\n"
+        "  /plan — 전략적 계획\n  /ralplan — 합의 기반 계획\n  /review — 계획 리뷰\n"
+        "  /analyze — 심층 분석\n  /sciomc — 병렬 연구\n  /deepinit — 코드베이스 초기화\n"
+        "\n<b>코드 품질</b>\n"
+        "  /code-review — 코드 리뷰\n  /security-review — 보안 리뷰\n"
+        "  /tdd — 테스트 주도 개발\n  /build-fix — 빌드 오류 수정\n"
+        "\n<b>유틸리티</b>\n"
+        "  /note — 메모 저장\n  /learner — 스킬 추출\n  /skill — 스킬 관리\n"
+        "  /trace — 에이전트 추적\n  /hud — HUD 설정\n  /external-context — 외부 문서 검색\n"
+        "  /writer-memory — 작가 메모리\n"
+        "\n<b>설정/관리</b>\n"
+        "  /omc-setup — OMC 설정\n  /omc-doctor — OMC 진단\n  /mcp-setup — MCP 설정\n"
+        "  /ralph-init — PRD 초기화\n  /configure-notifications — 알림 설정\n"
+        "  /learn-about-omc — 사용 패턴 분석\n  /cancel — 실행 모드 취소\n"
+        + '━'*25 + "\n<i>예: /autopilot 로그인 기능 만들어줘</i>")
     send_html(msg)
 
 def handle_help():
-    session_info = f"<code>{state.session_id[:8]}</code>" if state.session_id else "None"
-    model_info = escape_html(state.model) if state.model else "default (sonnet)"
+    session_info = f"<code>{state.session_id[:8]}</code>" if state.session_id else "없음"
+    model_info = escape_html(state.model) if state.model else "기본값 (sonnet)"
     msg = (
         "<b>Claude Code Telegram Bot</b>\n" + '━'*25 + "\n\n"
-        "<b>Usage</b>\n"
-        "Send text to chat with Claude.\n"
-        "Attach photos or files to have them analyzed automatically.\n"
-        "Send skill commands (/autopilot, etc.) and Claude will execute them.\n\n"
-        "<b>Sessions</b>\n"
-        "The bot maintains conversation context per session.\n"
-        "A session is created automatically with your first message,\n"
-        "and subsequent messages continue in the same session.\n"
-        "Use /session to reconnect to a previous session,\n"
-        "or /clear to start a new one.\n\n"
-        "<b>Models</b>\n"
+        "<b>사용법</b>\n"
+        "텍스트를 보내면 Claude와 대화합니다.\n"
+        "사진이나 파일을 첨부하면 자동으로 분석합니다.\n"
+        "스킬 명령어(/autopilot 등)를 보내면 Claude가 해당 스킬을 실행합니다.\n\n"
+        "<b>세션</b>\n"
+        "봇은 세션 단위로 대화 맥락을 유지합니다.\n"
+        "첫 메시지를 보내면 자동으로 세션이 생성되고,\n"
+        "이후 메시지는 같은 세션에서 이어집니다.\n"
+        "/session 으로 이전 세션에 다시 연결하거나\n"
+        "/clear 로 새 세션을 시작할 수 있습니다.\n\n"
+        "<b>모델</b>\n"
         "/model opus, /model sonnet, /model haiku\n"
-        "/model default to restore default\n\n"
-        "<b>Command Reference</b>\n"
-        "/builtin — List CLI built-in commands\n"
-        "/skills — List OMC skills\n\n"
-        "<b>Examples</b>\n"
-        "<code>Analyze the mutation.go file</code>\n"
-        "<code>/autopilot build a login feature</code>\n"
-        "<code>/plan create a refactoring strategy</code>\n"
+        "/model default 로 기본값 복원\n\n"
+        "<b>명령어 안내</b>\n"
+        "/builtin — CLI 빌트인 명령어 목록\n"
+        "/skills — OMC 스킬 목록\n"
+        "/update_bot — 봇 자동 업데이트\n\n"
+        "<b>예시</b>\n"
+        "<code>mutation.go 파일 분석해줘</code>\n"
+        "<code>/autopilot 로그인 기능 만들어줘</code>\n"
+        "<code>/plan 리팩토링 전략 세워줘</code>\n"
         "<code>/code_review prog/rand.go</code>\n\n"
-        + '━'*25 + f"\nSession: {session_info} | Model: <code>{model_info}</code>\n")
+        + '━'*25 + f"\n세션: {session_info} | 모델: <code>{model_info}</code>\n")
     send_html(msg)
 
 def handle_cancel():
     with state.lock: proc = state.claude_proc; was_busy = state.busy
     if proc and proc.poll() is None:
-        proc.kill()
+        if IS_WINDOWS:
+            proc.terminate()  # Windows: terminate instead of kill for cleaner shutdown
+        else:
+            proc.kill()
         with state.lock: state.claude_proc = None; state.busy = False
-        send_html("<b>Cancelled.</b> The running process has been terminated.")
+        send_html("<b>취소됨.</b> 실행 중인 프로세스를 종료했습니다.")
     elif was_busy:
         with state.lock: state.busy = False
-        send_html("<b>Reset.</b> Busy state has been cleared.")
+        send_html("<b>초기화.</b> 대기 상태를 해제했습니다.")
     else:
-        send_html("No task is currently running.")
+        send_html("실행 중인 작업이 없습니다.")
 
 def handle_selection(text):
     text = text.strip()
@@ -770,13 +748,13 @@ def handle_selection(text):
             sess_model = _get_session_model(sid)
             if sess_model: state.model = sess_model
             p = preview[:60] + "..." if len(preview) > 60 else preview
-            model_line = f"\nModel: <code>{escape_html(state.model or 'default')}</code>" if sess_model else ""
+            model_line = f"\n모델: <code>{escape_html(state.model or 'default')}</code>" if sess_model else ""
             send_html(
-                f"<b>Session connected</b>\nID: <code>{sid[:8]}</code>\n"
-                f"Time: {escape_html(ts)}\nPreview: {escape_html(p)}{model_line}\n"
-                f"{'━'*25}\nSend a message to continue in this session.")
+                f"<b>세션 연결됨</b>\nID: <code>{sid[:8]}</code>\n"
+                f"시간: {escape_html(ts)}\n미리보기: {escape_html(p)}{model_line}\n"
+                f"{'━'*25}\n메시지를 보내면 이 세션에서 대화를 이어갑니다.")
         else:
-            send_html(f"Invalid number. Please enter a value between 1 and {len(state.session_list)}.")
+            send_html(f"잘못된 번호입니다. 1-{len(state.session_list)} 사이를 입력하세요.")
         return
     uuid_pat = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
     if uuid_pat.match(text):
@@ -788,10 +766,10 @@ def handle_selection(text):
             state.session_id = text; state.selecting = False
             sess_model = _get_session_model(text)
             if sess_model: state.model = sess_model
-            model_info = f" | Model: {escape_html(sess_model)}" if sess_model else ""
-            send_html(f"<b>Session connected</b> <code>{text[:8]}</code>{model_info}")
+            model_info = f" | 모델: {escape_html(sess_model)}" if sess_model else ""
+            send_html(f"<b>세션 연결됨</b> <code>{text[:8]}</code>{model_info}")
         else:
-            send_html("Session not found. Please check the UUID.")
+            send_html("세션을 찾을 수 없습니다. UUID를 확인하세요.")
         return
     state.selecting = False
     handle_message(text)
@@ -799,9 +777,9 @@ def handle_selection(text):
 def handle_message(text):
     with state.lock:
         if state.busy:
-            send_html("<i>Claude is processing. Use /cancel to stop.</i>"); return
+            send_html("<i>Claude가 처리 중입니다. /cancel 로 취소할 수 있습니다.</i>"); return
         state.busy = True
-    send_html("<i>Request received. You can cancel at any time with /cancel.</i>")
+    send_html("<i>요청 접수됨. /cancel 로 언제든 취소 가능합니다.</i>")
     send_typing()
     sid = state.session_id
     def _run():
@@ -816,7 +794,7 @@ def handle_message(text):
             active_sid = state.session_id or new_sid or sid
             if questions:
                 _show_questions(questions, active_sid)
-                if output and output not in ("(empty response)",):
+                if output and output not in ("(빈 응답)",):
                     header = "Claude"
                     if active_sid: header += f" [{active_sid[:8]}]"
                     send_long(header, output)
@@ -828,7 +806,7 @@ def handle_message(text):
             log.info("Response sent to Telegram")
         except Exception as e:
             log.error("handle_message error: %s", e, exc_info=True)
-            send_html(f"<i>Error: {escape_html(str(e))}</i>")
+            send_html(f"<i>오류: {escape_html(str(e))}</i>")
         finally:
             with state.lock: state.busy = False
     threading.Thread(target=_run, daemon=True).start()
@@ -847,18 +825,18 @@ def process_update(update):
         best = max(photos, key=lambda p: p.get("file_size", 0))
         local = download_tg_file(best["file_id"])
         if local:
-            prompt = build_file_prompt(local, caption or "Please analyze this image")
+            prompt = build_file_prompt(local, caption or "이 이미지를 분석해줘")
             log.info("Photo received: %s", local); handle_message(prompt)
-        else: send_html("<i>Failed to download photo</i>")
+        else: send_html("<i>사진 다운로드 실패</i>")
         return
     doc = msg.get("document")
     if doc:
         fname = doc.get("file_name", "file")
         local = download_tg_file(doc["file_id"], fname)
         if local:
-            prompt = build_file_prompt(local, caption or "Please analyze this file content")
+            prompt = build_file_prompt(local, caption or "이 파일 내용을 분석해줘")
             log.info("Document received: %s -> %s", fname, local); handle_message(prompt)
-        else: send_html("<i>Failed to download file</i>")
+        else: send_html("<i>파일 다운로드 실패</i>")
         return
     if not text: return
     log.info("Received: %s", text[:100])
@@ -872,6 +850,7 @@ def process_update(update):
     elif lower == "/skills": handle_skills()
     elif lower in ("/help", "/start"): handle_help()
     elif lower == "/cancel": handle_cancel()
+    elif lower in ("/update_bot", "/update"): handle_update_bot()
     elif state.answering: handle_answer(text)
     elif state.selecting: handle_selection(text)
     else:
@@ -884,7 +863,7 @@ def process_update(update):
 def poll_loop():
     offset = 0
     log.info("Bot started.")
-    send_html("<b>Claude Code Bot started</b>\nSend /help to see available commands.")
+    send_html("<b>Claude Code Bot 시작됨</b>\n/help 로 명령어를 확인하세요.")
     while True:
         try:
             result = tg_api("getUpdates", {"offset": offset, "timeout": POLL_TIMEOUT, "allowed_updates": "message"})
@@ -905,206 +884,13 @@ def main():
             if state.claude_proc and state.claude_proc.poll() is None:
                 state.claude_proc.kill()
         sys.exit(0)
-    signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)
+    if not IS_WINDOWS:
+        signal.signal(signal.SIGTERM, sig_handler)
+    else:
+        try: signal.signal(signal.SIGBREAK, sig_handler)
+        except (AttributeError, OSError): pass
     poll_loop()
 
 if __name__ == "__main__":
     main()
-BOTSCRIPT
-
-    # Replace placeholders
-    sed -i "s|%%BOT_TOKEN%%|${BOT_TOKEN}|g" "$BOT_PATH"
-    sed -i "s|%%CHAT_ID%%|${CHAT_ID}|g" "$BOT_PATH"
-    sed -i "s|%%WORK_DIR%%|${WORK_DIR}|g" "$BOT_PATH"
-
-    # macOS sed compatibility
-    if [[ "$OS" == "macos" ]]; then
-        sed -i '' "s|%%BOT_TOKEN%%|${BOT_TOKEN}|g" "$BOT_PATH" 2>/dev/null || true
-        sed -i '' "s|%%CHAT_ID%%|${CHAT_ID}|g" "$BOT_PATH" 2>/dev/null || true
-        sed -i '' "s|%%WORK_DIR%%|${WORK_DIR}|g" "$BOT_PATH" 2>/dev/null || true
-    fi
-
-    chmod +x "$BOT_PATH"
-    ok "Bot script installed: $BOT_PATH"
-}
-
-# ---------------------------------------------------------------------------
-# Auto-start setup per OS
-# ---------------------------------------------------------------------------
-setup_autostart_linux() {
-    info "Registering systemd service..."
-    local service_dir="$HOME/.config/systemd/user"
-    mkdir -p "$service_dir"
-
-    cat > "$service_dir/claude-telegram.service" << EOF
-[Unit]
-Description=Claude Code Telegram Bot
-
-[Service]
-ExecStart=$PYTHON $BOT_PATH
-WorkingDirectory=$WORK_DIR
-Restart=always
-RestartSec=5
-Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=HOME=$HOME
-
-[Install]
-WantedBy=default.target
-EOF
-
-    systemctl --user daemon-reload
-    systemctl --user enable claude-telegram.service
-    systemctl --user start claude-telegram.service
-    ok "systemd service registered (auto-start enabled)"
-    echo ""
-    echo "  Check status: systemctl --user status claude-telegram"
-    echo "  View logs:    cat $INSTALL_DIR/bot.log"
-    echo "  Stop:         systemctl --user stop claude-telegram"
-    echo "  Restart:      systemctl --user restart claude-telegram"
-}
-
-setup_autostart_macos() {
-    info "Registering launchd service..."
-    local plist_dir="$HOME/Library/LaunchAgents"
-    local plist="$plist_dir/com.claude.telegram-bot.plist"
-    mkdir -p "$plist_dir"
-
-    cat > "$plist" << EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.claude.telegram-bot</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$PYTHON</string>
-        <string>$BOT_PATH</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>$WORK_DIR</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>$INSTALL_DIR/bot-stdout.log</string>
-    <key>StandardErrorPath</key>
-    <string>$INSTALL_DIR/bot-stderr.log</string>
-</dict>
-</plist>
-EOF
-
-    launchctl load "$plist" 2>/dev/null || true
-    launchctl start com.claude.telegram-bot 2>/dev/null || true
-    ok "launchd service registered (auto-start enabled)"
-    echo ""
-    echo "  Check status: launchctl list | grep claude"
-    echo "  View logs:    cat $INSTALL_DIR/bot.log"
-    echo "  Stop:         launchctl stop com.claude.telegram-bot"
-    echo "  Restart:      launchctl stop com.claude.telegram-bot && launchctl start com.claude.telegram-bot"
-}
-
-setup_autostart_wsl() {
-    info "Configuring WSL auto-start..."
-    # Add to .bashrc for auto-start on WSL login
-    local marker="# claude-telegram-bot autostart"
-    local start_cmd="(pgrep -f 'telegram-bot.py' > /dev/null 2>&1 || nohup $PYTHON $BOT_PATH > /dev/null 2>&1 &)"
-
-    if ! grep -q "$marker" "$HOME/.bashrc" 2>/dev/null; then
-        echo "" >> "$HOME/.bashrc"
-        echo "$marker" >> "$HOME/.bashrc"
-        echo "$start_cmd" >> "$HOME/.bashrc"
-    fi
-
-    # Start now
-    eval "$start_cmd"
-    ok "WSL auto-start configured (added to .bashrc)"
-    echo ""
-    echo "  Check status: pgrep -f telegram-bot.py"
-    echo "  View logs:    cat $INSTALL_DIR/bot.log"
-    echo "  Stop:         pkill -f telegram-bot.py"
-}
-
-# ---------------------------------------------------------------------------
-# Uninstall info
-# ---------------------------------------------------------------------------
-print_uninstall() {
-    echo ""
-    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${BOLD} How to Uninstall${NC}"
-    echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    case "$OS" in
-        linux)
-            echo "  systemctl --user stop claude-telegram"
-            echo "  systemctl --user disable claude-telegram"
-            echo "  rm ~/.config/systemd/user/claude-telegram.service"
-            ;;
-        macos)
-            echo "  launchctl stop com.claude.telegram-bot"
-            echo "  launchctl unload ~/Library/LaunchAgents/com.claude.telegram-bot.plist"
-            echo "  rm ~/Library/LaunchAgents/com.claude.telegram-bot.plist"
-            ;;
-        wsl)
-            echo "  pkill -f telegram-bot.py"
-            echo "  Remove the '# claude-telegram-bot autostart' line from .bashrc"
-            ;;
-    esac
-    echo "  rm -rf $INSTALL_DIR"
-    echo ""
-}
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-main() {
-    echo ""
-    echo -e "${BOLD}╔═══════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}║  Claude Code Telegram Bot - Setup         ║${NC}"
-    echo -e "${BOLD}╚═══════════════════════════════════════════╝${NC}"
-    echo ""
-
-    OS=$(detect_os)
-    info "OS: $OS"
-
-    if [[ "$OS" == "unknown" || "$OS" == "windows-git-bash" ]]; then
-        err "This OS is not directly supported."
-        echo "On Windows, please run this inside WSL (Windows Subsystem for Linux)."
-        exit 1
-    fi
-
-    check_prerequisites
-    get_user_input
-    install_bot
-
-    # Test bot token
-    info "Validating bot token..."
-    if $PYTHON -c "
-import urllib.request, json
-r = urllib.request.urlopen('https://api.telegram.org/bot${BOT_TOKEN}/getMe', timeout=10)
-d = json.loads(r.read())
-if d.get('ok'): print('Bot: @' + d['result'].get('username', ''))
-else: exit(1)
-" 2>/dev/null; then
-        ok "Token validation successful"
-    else
-        warn "Token validation failed. Please double-check your token."
-    fi
-
-    # Setup autostart
-    case "$OS" in
-        linux) setup_autostart_linux ;;
-        macos) setup_autostart_macos ;;
-        wsl)   setup_autostart_wsl ;;
-    esac
-
-    print_uninstall
-
-    echo -e "${GREEN}${BOLD}Installation complete!${NC}"
-    echo "Send /help in Telegram to get started."
-    echo ""
-}
-
-main "$@"
