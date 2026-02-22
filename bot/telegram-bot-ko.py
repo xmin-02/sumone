@@ -46,6 +46,13 @@ WORK_DIR = _config.get("work_dir", os.path.expanduser("~"))
 LANG = _config.get("lang", "ko")
 GITHUB_REPO = _config.get("github_repo", "xmin-02/Claude-telegram-bot")
 
+DEFAULT_SETTINGS = {
+    "show_cost": True,
+    "show_status": True,
+    "show_global_cost": True,
+}
+settings = {**DEFAULT_SETTINGS, **_config.get("settings", {})}
+
 MAX_MSG_LEN = 3900
 MAX_PARTS = 5
 POLL_TIMEOUT = 30
@@ -404,7 +411,7 @@ def run_claude(message, session_id=None):
                             log.info("Intermediate text: %d chars", len(combined))
                         sent_text_count = len(final_text)
                 now = time.time()
-                if now - last_status_time >= 5:
+                if settings["show_status"] and now - last_status_time >= 5:
                     desc = _describe_tool(event)
                     if desc:
                         elapsed = int(now - start_time); mins, secs = divmod(elapsed, 60)
@@ -428,11 +435,12 @@ def run_claude(message, session_id=None):
                 out_tok = usage.get("output_tokens", 0)
                 if cost:
                     state.last_cost = cost; state.total_cost += cost
-                    dur_s = duration / 1000 if duration else 0
-                    mins, secs = divmod(int(dur_s), 60)
-                    dur_str = f"{mins}분 {secs}초" if mins > 0 else f"{secs}초"
-                    cost_line = f"\U0001f4b0 ${cost:.4f} | \u23f1 {dur_str} | \U0001f504 {turns}턴 | \U0001f4ca {in_tok:,}+{out_tok:,} 토큰"
-                    send_html(f"<i>{cost_line}</i>")
+                    if settings["show_cost"]:
+                        dur_s = duration / 1000 if duration else 0
+                        mins, secs = divmod(int(dur_s), 60)
+                        dur_str = f"{mins}분 {secs}초" if mins > 0 else f"{secs}초"
+                        cost_line = f"\U0001f4b0 ${cost:.4f} | \u23f1 {dur_str} | \U0001f504 {turns}턴 | \U0001f4ca {in_tok:,}+{out_tok:,} 토큰"
+                        send_html(f"<i>{cost_line}</i>")
         try: proc.wait(timeout=10)
         except Exception: pass
         try: stderr_out = proc.stderr.read().decode("utf-8", errors="replace").strip()
@@ -591,16 +599,17 @@ def handle_cost():
     msg = (f"<b>비용 정보</b>\n{'━'*25}\n"
            f"마지막 요청: ${state.last_cost:.4f}\n"
            f"봇 세션 누적: ${state.total_cost:.4f}\n")
-    try:
-        g_cost, g_in, g_out, g_sessions = get_global_usage()
-        msg += (f"\n<b>전체 사용량 (모든 세션)</b>\n{'━'*25}\n"
-                f"총 비용: ${g_cost:.4f}\n"
-                f"총 세션: {g_sessions}개\n"
-                f"입력 토큰: {g_in:,}\n"
-                f"출력 토큰: {g_out:,}\n"
-                f"총 토큰: {g_in + g_out:,}\n")
-    except Exception:
-        pass
+    if settings["show_global_cost"]:
+        try:
+            g_cost, g_in, g_out, g_sessions = get_global_usage()
+            msg += (f"\n<b>전체 사용량 (모든 세션)</b>\n{'━'*25}\n"
+                    f"총 비용: ${g_cost:.4f}\n"
+                    f"총 세션: {g_sessions}개\n"
+                    f"입력 토큰: {g_in:,}\n"
+                    f"출력 토큰: {g_out:,}\n"
+                    f"총 토큰: {g_in + g_out:,}\n")
+        except Exception:
+            pass
     send_html(msg)
 
 def handle_model(text):
@@ -704,6 +713,7 @@ def handle_builtin():
         "  /clear — 대화 초기화\n  /cost — 비용 확인\n  /model — 모델 변경/확인\n"
         "  /session — 세션 선택\n  /status — 상태 확인\n  /cancel — 작업 취소\n"
         "  /pwd — 현재 작업 디렉토리\n  /cd — 디렉토리 이동\n  /ls — 파일 목록\n"
+        "  /settings — 봇 설정 (비용 표시, 상태 메시지 등)\n"
         "  /update_bot — 봇 자동 업데이트 (GitHub에서 최신 코드 다운로드)\n"
         "\n<b>Claude에 전달됨</b>\n"
         "  /compact — 컨텍스트 압축\n  /context — 컨텍스트 사용량\n  /init — 프로젝트 초기화\n"
@@ -768,6 +778,43 @@ def handle_help():
         "<code>/plan 리팩토링 전략 세워줘</code>\n"
         "<code>/code_review prog/rand.go</code>\n\n"
         + '━'*25 + f"\n세션: {session_info} | 모델: <code>{model_info}</code>\n")
+    send_html(msg)
+
+def _save_settings():
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg["settings"] = settings
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=4, ensure_ascii=False)
+    except Exception:
+        pass
+
+SETTINGS_KEYS = [
+    ("show_cost", "요청별 비용 표시", "각 응답 후 비용/토큰 정보 표시"),
+    ("show_status", "작업 상태 메시지", "처리 중 도구 사용 상태 표시"),
+    ("show_global_cost", "전체 비용 표시", "/cost에서 전체 세션 누적 비용 표시"),
+]
+
+def handle_settings(text):
+    parts = text.split(maxsplit=1)
+    if len(parts) >= 2 and parts[1].strip().isdigit():
+        idx = int(parts[1].strip()) - 1
+        if 0 <= idx < len(SETTINGS_KEYS):
+            key = SETTINGS_KEYS[idx][0]
+            settings[key] = not settings[key]
+            _save_settings()
+            status = "ON" if settings[key] else "OFF"
+            send_html(f"<b>{SETTINGS_KEYS[idx][1]}</b> → {status}")
+            return
+    lines = []
+    for i, (key, label, desc) in enumerate(SETTINGS_KEYS, 1):
+        status = "ON" if settings[key] else "OFF"
+        icon = "\u2705" if settings[key] else "\u274c"
+        lines.append(f"  <b>{i}.</b> {icon} {escape_html(label)} [{status}]\n      <i>{escape_html(desc)}</i>")
+    msg = (f"<b>설정</b>\n{'━'*25}\n"
+           + "\n".join(lines)
+           + f"\n{'━'*25}\n번호를 입력해서 토글하세요.\n예: /settings 1")
     send_html(msg)
 
 def handle_pwd():
@@ -969,6 +1016,7 @@ def process_update(update):
     elif lower == "/skills": handle_skills()
     elif lower in ("/help", "/start"): handle_help()
     elif lower == "/cancel": handle_cancel()
+    elif lower.startswith("/settings"): handle_settings(text)
     elif lower == "/pwd": handle_pwd()
     elif lower.startswith("/cd"): handle_cd(text)
     elif lower.startswith("/ls"): handle_ls(text)

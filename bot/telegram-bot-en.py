@@ -46,6 +46,13 @@ WORK_DIR = _config.get("work_dir", os.path.expanduser("~"))
 LANG = _config.get("lang", "en")
 GITHUB_REPO = _config.get("github_repo", "xmin-02/Claude-telegram-bot")
 
+DEFAULT_SETTINGS = {
+    "show_cost": True,
+    "show_status": True,
+    "show_global_cost": True,
+}
+settings = {**DEFAULT_SETTINGS, **_config.get("settings", {})}
+
 MAX_MSG_LEN = 3900
 MAX_PARTS = 5
 POLL_TIMEOUT = 30
@@ -404,7 +411,7 @@ def run_claude(message, session_id=None):
                             log.info("Intermediate text: %d chars", len(combined))
                         sent_text_count = len(final_text)
                 now = time.time()
-                if now - last_status_time >= 5:
+                if settings["show_status"] and now - last_status_time >= 5:
                     desc = _describe_tool(event)
                     if desc:
                         elapsed = int(now - start_time); mins, secs = divmod(elapsed, 60)
@@ -428,11 +435,12 @@ def run_claude(message, session_id=None):
                 out_tok = usage.get("output_tokens", 0)
                 if cost:
                     state.last_cost = cost; state.total_cost += cost
-                    dur_s = duration / 1000 if duration else 0
-                    mins, secs = divmod(int(dur_s), 60)
-                    dur_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
-                    cost_line = f"\U0001f4b0 ${cost:.4f} | \u23f1 {dur_str} | \U0001f504 {turns} turns | \U0001f4ca {in_tok:,}+{out_tok:,} tokens"
-                    send_html(f"<i>{cost_line}</i>")
+                    if settings["show_cost"]:
+                        dur_s = duration / 1000 if duration else 0
+                        mins, secs = divmod(int(dur_s), 60)
+                        dur_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+                        cost_line = f"\U0001f4b0 ${cost:.4f} | \u23f1 {dur_str} | \U0001f504 {turns} turns | \U0001f4ca {in_tok:,}+{out_tok:,} tokens"
+                        send_html(f"<i>{cost_line}</i>")
         try: proc.wait(timeout=10)
         except Exception: pass
         try: stderr_out = proc.stderr.read().decode("utf-8", errors="replace").strip()
@@ -591,16 +599,17 @@ def handle_cost():
     msg = (f"<b>Cost Info</b>\n{'━'*25}\n"
            f"Last request: ${state.last_cost:.4f}\n"
            f"Bot session total: ${state.total_cost:.4f}\n")
-    try:
-        g_cost, g_in, g_out, g_sessions = get_global_usage()
-        msg += (f"\n<b>Global Usage (all sessions)</b>\n{'━'*25}\n"
-                f"Total cost: ${g_cost:.4f}\n"
-                f"Total sessions: {g_sessions}\n"
-                f"Input tokens: {g_in:,}\n"
-                f"Output tokens: {g_out:,}\n"
-                f"Total tokens: {g_in + g_out:,}\n")
-    except Exception:
-        pass
+    if settings["show_global_cost"]:
+        try:
+            g_cost, g_in, g_out, g_sessions = get_global_usage()
+            msg += (f"\n<b>Global Usage (all sessions)</b>\n{'━'*25}\n"
+                    f"Total cost: ${g_cost:.4f}\n"
+                    f"Total sessions: {g_sessions}\n"
+                    f"Input tokens: {g_in:,}\n"
+                    f"Output tokens: {g_out:,}\n"
+                    f"Total tokens: {g_in + g_out:,}\n")
+        except Exception:
+            pass
     send_html(msg)
 
 def handle_model(text):
@@ -704,6 +713,7 @@ def handle_builtin():
         "  /clear — Clear session\n  /cost — Show cost\n  /model — Change/show model\n"
         "  /session — Select session\n  /status — Show status\n  /cancel — Cancel task\n"
         "  /pwd — Current working directory\n  /cd — Change directory\n  /ls — List files\n"
+        "  /settings — Bot settings (cost display, status messages, etc.)\n"
         "  /update_bot — Auto-update bot (download latest code from GitHub)\n"
         "\n<b>Passed to Claude</b>\n"
         "  /compact — Compress context\n  /context — Context usage\n  /init — Initialize project\n"
@@ -768,6 +778,43 @@ def handle_help():
         "<code>/plan refactoring strategy</code>\n"
         "<code>/code_review prog/rand.go</code>\n\n"
         + '━'*25 + f"\nSession: {session_info} | Model: <code>{model_info}</code>\n")
+    send_html(msg)
+
+def _save_settings():
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg["settings"] = settings
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=4, ensure_ascii=False)
+    except Exception:
+        pass
+
+SETTINGS_KEYS = [
+    ("show_cost", "Cost per request", "Show cost/token info after each response"),
+    ("show_status", "Status messages", "Show tool usage status during processing"),
+    ("show_global_cost", "Global cost", "Show cumulative cost in /cost command"),
+]
+
+def handle_settings(text):
+    parts = text.split(maxsplit=1)
+    if len(parts) >= 2 and parts[1].strip().isdigit():
+        idx = int(parts[1].strip()) - 1
+        if 0 <= idx < len(SETTINGS_KEYS):
+            key = SETTINGS_KEYS[idx][0]
+            settings[key] = not settings[key]
+            _save_settings()
+            status = "ON" if settings[key] else "OFF"
+            send_html(f"<b>{SETTINGS_KEYS[idx][1]}</b> → {status}")
+            return
+    lines = []
+    for i, (key, label, desc) in enumerate(SETTINGS_KEYS, 1):
+        status = "ON" if settings[key] else "OFF"
+        icon = "\u2705" if settings[key] else "\u274c"
+        lines.append(f"  <b>{i}.</b> {icon} {escape_html(label)} [{status}]\n      <i>{escape_html(desc)}</i>")
+    msg = (f"<b>Settings</b>\n{'━'*25}\n"
+           + "\n".join(lines)
+           + f"\n{'━'*25}\nEnter a number to toggle.\nExample: /settings 1")
     send_html(msg)
 
 def handle_pwd():
@@ -969,6 +1016,7 @@ def process_update(update):
     elif lower == "/skills": handle_skills()
     elif lower in ("/help", "/start"): handle_help()
     elif lower == "/cancel": handle_cancel()
+    elif lower.startswith("/settings"): handle_settings(text)
     elif lower == "/pwd": handle_pwd()
     elif lower.startswith("/cd"): handle_cd(text)
     elif lower.startswith("/ls"): handle_ls(text)
