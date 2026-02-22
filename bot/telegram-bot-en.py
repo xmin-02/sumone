@@ -824,17 +824,18 @@ SETTINGS_KEYS = [
 def _settings_keyboard():
     rows = []
     for key, label, desc in SETTINGS_KEYS:
-        icon = "\u2705" if settings[key] else "\u274c"
-        rows.append([{"text": f"{icon} {label}", "callback_data": f"stg:{key}"}])
-    rows.append([{"text": "\u2716 Close", "callback_data": "stg:close"}])
+        mark = "ON" if settings[key] else "OFF"
+        rows.append([{"text": f"[{mark}]  {label}", "callback_data": f"stg:{key}"}])
+    rows.append([{"text": "Close", "callback_data": "stg:close"}])
     return json.dumps({"inline_keyboard": rows})
 
 def _settings_text():
     lines = []
     for key, label, desc in SETTINGS_KEYS:
-        icon = "\u2705" if settings[key] else "\u274c"
-        lines.append(f"{icon} <b>{escape_html(label)}</b>\n    <i>{escape_html(desc)}</i>")
-    return f"\u2699\ufe0f <b>Settings</b>\n{'━'*25}\n" + "\n".join(lines) + f"\n{'━'*25}\n<i>Tap buttons to toggle ON/OFF</i>"
+        mark = "ON " if settings[key] else "OFF"
+        lines.append(f"  <code>[{mark}]</code> <b>{escape_html(label)}</b>\n          <i>{escape_html(desc)}</i>")
+    body = "\n\n".join(lines)
+    return f"<b>Settings</b>\n{'━'*25}\n\n{body}\n\n{'━'*25}\n<i>Tap to toggle</i>"
 
 def handle_settings(text):
     params = {
