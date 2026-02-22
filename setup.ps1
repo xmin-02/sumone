@@ -1,9 +1,17 @@
-# ============================================================================
+﻿# ============================================================================
 # Claude Code Telegram Bot - Windows Setup Script (PowerShell)
 # Downloads bot from GitHub, configures, and sets up auto-start.
 # Usage: powershell -ExecutionPolicy Bypass -File setup.ps1
 # ============================================================================
 $ErrorActionPreference = "Stop"
+
+# --- UTF-8 Console Encoding ---
+try {
+    [Console]::InputEncoding = [System.Text.Encoding]::UTF8
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+    chcp 65001 | Out-Null
+} catch {}
 
 function Write-Info  { Write-Host "[INFO] " -ForegroundColor Cyan -NoNewline; Write-Host $args }
 function Write-Ok    { Write-Host "[OK] " -ForegroundColor Green -NoNewline; Write-Host $args }
@@ -61,9 +69,9 @@ function Select-Language {
 # --- User Input ---
 function Get-UserInput {
     Write-Host ""
-    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor White
+    Write-Host "========================================" -ForegroundColor White
     Write-Host " Telegram Bot Setup" -ForegroundColor White
-    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor White
+    Write-Host "========================================" -ForegroundColor White
     Write-Host ""
     Write-Host "1. @BotFather -> /newbot -> Copy token"
     Write-Host "2. @userinfobot -> /start -> Copy Chat ID"
