@@ -70,12 +70,12 @@ Once running, open Telegram and send `/help` to your bot.
 ```
 GitHub Repository                    Your Machine
 ┌─────────────────┐                  ┌──────────────────────────────┐
-│ bot/             │   setup.sh/ps1  │ ~/.claude-telegram-bot/      │
-│  telegram-bot-   │ ──download───→  │  telegram-bot.py  (bot code) │
-│   ko.py / en.py  │                 │  config.json      (secrets)  │
-│                  │  /update_bot    │  bot.log          (runtime)  │
-│ setup.sh         │ ←──check────── │  downloads/       (files)    │
-│ setup.ps1        │                 └──────────┬───────────────────┘
+│ bot/            │   setup.sh/ps1   │ ~/.claude-telegram-bot/      │
+│ telegram-bot-   │ ───download────  │  telegram-bot.py  (bot code) │
+│ ko.py / en.py   │                  │  config.json      (secrets)  │
+│                 │   /update_bot    │  bot.log          (runtime)  │
+│ setup.sh        │ ─────check─────  │  downloads/       (files)    │
+│ setup.ps1       │                  └──────────┬───────────────────┘
 └─────────────────┘                             │
                                                 ▼
                                     claude CLI (subprocess)
