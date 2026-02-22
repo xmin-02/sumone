@@ -66,7 +66,7 @@ log = logging.getLogger("tg-bot")
 
 # --- State ---
 class State:
-    session_id = None
+    session_id = _config.get("session_id")
     selecting = False
     answering = False
     session_list = []
@@ -77,6 +77,16 @@ class State:
     total_cost = 0.0
     last_cost = 0.0
     lock = threading.Lock()
+
+def _save_session_id(sid):
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg["session_id"] = sid
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=4, ensure_ascii=False)
+    except Exception:
+        pass
 
 MODEL_ALIASES = {
     "opus": "claude-opus-4-6",
@@ -580,19 +590,20 @@ def handle_answer(text):
         if 0 <= idx < len(options_map):
             chosen = options_map[idx]; label = chosen["label"]
             state.answering = False; state.pending_question = None
-            if sid: state.session_id = sid
+            if sid: state.session_id = sid; _save_session_id(sid)
             answer_text = f'"{label}" selected.'
             log.info("Answer: %s (option %d)", label, idx + 1)
             handle_message(answer_text); return
         else:
             send_html(f"Invalid number. Enter a value between 1 and {len(options_map)}."); return
     state.answering = False; state.pending_question = None
-    if sid: state.session_id = sid
+    if sid: state.session_id = sid; _save_session_id(sid)
     handle_message(text)
 
 def handle_clear():
     state.session_id = None; state.selecting = False
     state.answering = False; state.pending_question = None
+    _save_session_id(None)
     send_html("<b>Session Cleared</b>\nStarting a new conversation without previous context.")
 
 def handle_cost():
@@ -934,6 +945,7 @@ def handle_selection(text):
         if 0 <= idx < len(state.session_list):
             sid, ts, preview = state.session_list[idx]
             state.session_id = sid; state.selecting = False
+            _save_session_id(sid)
             sess_model = _get_session_model(sid)
             if sess_model: state.model = sess_model
             p = preview[:60] + "..." if len(preview) > 60 else preview
@@ -953,6 +965,7 @@ def handle_selection(text):
                 found = True; break
         if found:
             state.session_id = text; state.selecting = False
+            _save_session_id(text)
             sess_model = _get_session_model(text)
             if sess_model: state.model = sess_model
             model_info = f" | Model: {escape_html(sess_model)}" if sess_model else ""
@@ -979,6 +992,7 @@ def handle_message(text):
                      len(output) if output else 0, new_sid, bool(questions))
             if new_sid and not state.session_id:
                 state.session_id = new_sid
+                _save_session_id(new_sid)
                 log.info("Auto-connected to session: %s", new_sid)
             active_sid = state.session_id or new_sid or sid
             if questions:
