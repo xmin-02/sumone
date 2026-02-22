@@ -791,31 +791,54 @@ def _save_settings():
         pass
 
 SETTINGS_KEYS = [
-    ("show_cost", "Cost per request", "Show cost/token info after each response"),
-    ("show_status", "Status messages", "Show tool usage status during processing"),
-    ("show_global_cost", "Global cost", "Show cumulative cost in /cost command"),
+    ("show_cost", "Cost per request", "Cost/token info after response"),
+    ("show_status", "Status messages", "Tool usage during processing"),
+    ("show_global_cost", "Global cost", "Cumulative cost in /cost"),
 ]
 
-def handle_settings(text):
-    parts = text.split(maxsplit=1)
-    if len(parts) >= 2 and parts[1].strip().isdigit():
-        idx = int(parts[1].strip()) - 1
-        if 0 <= idx < len(SETTINGS_KEYS):
-            key = SETTINGS_KEYS[idx][0]
-            settings[key] = not settings[key]
-            _save_settings()
-            status = "ON" if settings[key] else "OFF"
-            send_html(f"<b>{SETTINGS_KEYS[idx][1]}</b> → {status}")
-            return
-    lines = []
-    for i, (key, label, desc) in enumerate(SETTINGS_KEYS, 1):
-        status = "ON" if settings[key] else "OFF"
+def _settings_keyboard():
+    rows = []
+    for key, label, desc in SETTINGS_KEYS:
         icon = "\u2705" if settings[key] else "\u274c"
-        lines.append(f"  <b>{i}.</b> {icon} {escape_html(label)} [{status}]\n      <i>{escape_html(desc)}</i>")
-    msg = (f"<b>Settings</b>\n{'━'*25}\n"
-           + "\n".join(lines)
-           + f"\n{'━'*25}\nEnter a number to toggle.\nExample: /settings 1")
-    send_html(msg)
+        rows.append([{"text": f"{icon} {label}", "callback_data": f"stg:{key}"}])
+    rows.append([{"text": "\u2716 Close", "callback_data": "stg:close"}])
+    return json.dumps({"inline_keyboard": rows})
+
+def _settings_text():
+    lines = []
+    for key, label, desc in SETTINGS_KEYS:
+        icon = "\u2705" if settings[key] else "\u274c"
+        lines.append(f"{icon} <b>{escape_html(label)}</b>\n    <i>{escape_html(desc)}</i>")
+    return f"\u2699\ufe0f <b>Settings</b>\n{'━'*25}\n" + "\n".join(lines) + f"\n{'━'*25}\n<i>Tap buttons to toggle ON/OFF</i>"
+
+def handle_settings(text):
+    params = {
+        "chat_id": CHAT_ID,
+        "text": _settings_text(),
+        "parse_mode": "HTML",
+        "reply_markup": _settings_keyboard(),
+    }
+    tg_api("sendMessage", params)
+
+def handle_settings_callback(callback_id, msg_id, data):
+    key = data.split(":", 1)[1]
+    if key == "close":
+        tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
+        tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
+        return
+    if key in settings:
+        settings[key] = not settings[key]
+        _save_settings()
+        status = "ON" if settings[key] else "OFF"
+        label = next((l for k, l, d in SETTINGS_KEYS if k == key), key)
+        tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": f"{label}: {status}"})
+        tg_api("editMessageText", {
+            "chat_id": CHAT_ID,
+            "message_id": msg_id,
+            "text": _settings_text(),
+            "parse_mode": "HTML",
+            "reply_markup": _settings_keyboard(),
+        })
 
 def handle_pwd():
     send_html(f"<b>Working Directory</b>\n<code>{escape_html(WORK_DIR)}</code>")
@@ -979,6 +1002,15 @@ def handle_message(text):
 
 # --- Main loop ---
 def process_update(update):
+    cb = update.get("callback_query")
+    if cb:
+        cb_chat = str(cb.get("message", {}).get("chat", {}).get("id", ""))
+        if cb_chat != CHAT_ID: return
+        data = cb.get("data", "")
+        if data.startswith("stg:"):
+            msg_id = cb.get("message", {}).get("message_id")
+            handle_settings_callback(cb["id"], msg_id, data)
+        return
     msg = update.get("message")
     if not msg: return
     chat_id = str(msg.get("chat", {}).get("id", ""))
@@ -1036,7 +1068,7 @@ def poll_loop():
     send_html("<b>Claude Code Bot started</b>\nSend /help to see available commands.")
     while True:
         try:
-            result = tg_api("getUpdates", {"offset": offset, "timeout": POLL_TIMEOUT, "allowed_updates": "message"})
+            result = tg_api("getUpdates", {"offset": offset, "timeout": POLL_TIMEOUT, "allowed_updates": json.dumps(["message", "callback_query"])})
             if not result or not result.get("ok"):
                 log.warning("getUpdates failed"); time.sleep(5); continue
             for update in result.get("result", []):

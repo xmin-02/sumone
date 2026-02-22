@@ -791,31 +791,54 @@ def _save_settings():
         pass
 
 SETTINGS_KEYS = [
-    ("show_cost", "요청별 비용 표시", "각 응답 후 비용/토큰 정보 표시"),
-    ("show_status", "작업 상태 메시지", "처리 중 도구 사용 상태 표시"),
-    ("show_global_cost", "전체 비용 표시", "/cost에서 전체 세션 누적 비용 표시"),
+    ("show_cost", "요청별 비용 표시", "응답 후 비용/토큰 정보"),
+    ("show_status", "작업 상태 메시지", "처리 중 도구 사용 상태"),
+    ("show_global_cost", "전체 비용 표시", "/cost 전체 세션 누적"),
 ]
 
-def handle_settings(text):
-    parts = text.split(maxsplit=1)
-    if len(parts) >= 2 and parts[1].strip().isdigit():
-        idx = int(parts[1].strip()) - 1
-        if 0 <= idx < len(SETTINGS_KEYS):
-            key = SETTINGS_KEYS[idx][0]
-            settings[key] = not settings[key]
-            _save_settings()
-            status = "ON" if settings[key] else "OFF"
-            send_html(f"<b>{SETTINGS_KEYS[idx][1]}</b> → {status}")
-            return
-    lines = []
-    for i, (key, label, desc) in enumerate(SETTINGS_KEYS, 1):
-        status = "ON" if settings[key] else "OFF"
+def _settings_keyboard():
+    rows = []
+    for key, label, desc in SETTINGS_KEYS:
         icon = "\u2705" if settings[key] else "\u274c"
-        lines.append(f"  <b>{i}.</b> {icon} {escape_html(label)} [{status}]\n      <i>{escape_html(desc)}</i>")
-    msg = (f"<b>설정</b>\n{'━'*25}\n"
-           + "\n".join(lines)
-           + f"\n{'━'*25}\n번호를 입력해서 토글하세요.\n예: /settings 1")
-    send_html(msg)
+        rows.append([{"text": f"{icon} {label}", "callback_data": f"stg:{key}"}])
+    rows.append([{"text": "\u2716 닫기", "callback_data": "stg:close"}])
+    return json.dumps({"inline_keyboard": rows})
+
+def _settings_text():
+    lines = []
+    for key, label, desc in SETTINGS_KEYS:
+        icon = "\u2705" if settings[key] else "\u274c"
+        lines.append(f"{icon} <b>{escape_html(label)}</b>\n    <i>{escape_html(desc)}</i>")
+    return f"\u2699\ufe0f <b>설정</b>\n{'━'*25}\n" + "\n".join(lines) + f"\n{'━'*25}\n<i>버튼을 눌러 ON/OFF 전환</i>"
+
+def handle_settings(text):
+    params = {
+        "chat_id": CHAT_ID,
+        "text": _settings_text(),
+        "parse_mode": "HTML",
+        "reply_markup": _settings_keyboard(),
+    }
+    tg_api("sendMessage", params)
+
+def handle_settings_callback(callback_id, msg_id, data):
+    key = data.split(":", 1)[1]
+    if key == "close":
+        tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
+        tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
+        return
+    if key in settings:
+        settings[key] = not settings[key]
+        _save_settings()
+        status = "ON" if settings[key] else "OFF"
+        label = next((l for k, l, d in SETTINGS_KEYS if k == key), key)
+        tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": f"{label}: {status}"})
+        tg_api("editMessageText", {
+            "chat_id": CHAT_ID,
+            "message_id": msg_id,
+            "text": _settings_text(),
+            "parse_mode": "HTML",
+            "reply_markup": _settings_keyboard(),
+        })
 
 def handle_pwd():
     send_html(f"<b>작업 디렉토리</b>\n<code>{escape_html(WORK_DIR)}</code>")
@@ -979,6 +1002,15 @@ def handle_message(text):
 
 # --- Main loop ---
 def process_update(update):
+    cb = update.get("callback_query")
+    if cb:
+        cb_chat = str(cb.get("message", {}).get("chat", {}).get("id", ""))
+        if cb_chat != CHAT_ID: return
+        data = cb.get("data", "")
+        if data.startswith("stg:"):
+            msg_id = cb.get("message", {}).get("message_id")
+            handle_settings_callback(cb["id"], msg_id, data)
+        return
     msg = update.get("message")
     if not msg: return
     chat_id = str(msg.get("chat", {}).get("id", ""))
@@ -1036,7 +1068,7 @@ def poll_loop():
     send_html("<b>Claude Code Bot 시작됨</b>\n/help 로 명령어를 확인하세요.")
     while True:
         try:
-            result = tg_api("getUpdates", {"offset": offset, "timeout": POLL_TIMEOUT, "allowed_updates": "message"})
+            result = tg_api("getUpdates", {"offset": offset, "timeout": POLL_TIMEOUT, "allowed_updates": json.dumps(["message", "callback_query"])})
             if not result or not result.get("ok"):
                 log.warning("getUpdates failed"); time.sleep(5); continue
             for update in result.get("result", []):
