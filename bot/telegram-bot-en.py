@@ -183,7 +183,15 @@ def send_text(text, parse_mode=None):
 def send_html(text):
     result = send_text(text, parse_mode="HTML")
     if not result or not result.get("ok"):
-        send_text(re.sub(r"<[^>]+>", "", text))
+        result = send_text(re.sub(r"<[^>]+>", "", text))
+    try:
+        return result["result"]["message_id"]
+    except Exception:
+        return None
+
+def delete_msg(msg_id):
+    if msg_id:
+        tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
 
 def send_long(header, body_md, footer=None):
     html_body = md_to_telegram_html(body_md)
@@ -1080,7 +1088,7 @@ def handle_message(text):
         if state.busy:
             send_html("<i>Claude is processing. Use /cancel to stop.</i>"); return
         state.busy = True
-    send_html("<i>Request received. Use /cancel to stop at any time.</i>")
+    ack_id = send_html("<i>Request received. Use /cancel to stop at any time.</i>")
     send_typing()
     sid = state.session_id
     def _run():
@@ -1095,6 +1103,7 @@ def handle_message(text):
                 log.info("Auto-connected to session: %s", new_sid)
             active_sid = state.session_id or new_sid or sid
             token_footer = _token_footer()
+            delete_msg(ack_id)
             if questions:
                 _show_questions(questions, active_sid)
                 if output and output not in ("",):
@@ -1109,6 +1118,7 @@ def handle_message(text):
             log.info("Response sent to Telegram")
         except Exception as e:
             log.error("handle_message error: %s", e, exc_info=True)
+            delete_msg(ack_id)
             send_html(f"<i>Error: {escape_html(str(e))}</i>")
         finally:
             with state.lock: state.busy = False
