@@ -528,7 +528,7 @@ _PROJ_DIR = os.path.join(os.path.expanduser("~"), ".claude", "projects")
 def _scan_jsonl_tokens(fpath):
     total = 0
     try:
-        with open(fpath) as f:
+        with open(fpath, encoding="utf-8", errors="replace") as f:
             for line in f:
                 if '"assistant"' not in line:
                     continue
