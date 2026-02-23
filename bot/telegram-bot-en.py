@@ -45,12 +45,14 @@ CHAT_ID = str(_config["chat_id"])
 WORK_DIR = _config.get("work_dir", os.path.expanduser("~"))
 LANG = _config.get("lang", "en")
 GITHUB_REPO = _config.get("github_repo", "xmin-02/Claude-telegram-bot")
+REMOTE_BOTS = _config.get("remote_bots", [])
 
 DEFAULT_SETTINGS = {
     "show_cost": False,
     "show_status": True,
     "show_global_cost": True,
     "token_display": "month",
+    "show_remote_tokens": False,
 }
 TOKEN_PERIODS = ["session", "day", "month", "year", "total"]
 TOKEN_LABELS = {"session": "Session", "day": "Day", "month": "Month", "year": "Year", "total": "Total"}
@@ -80,6 +82,7 @@ class State:
     total_cost = 0.0
     last_cost = 0.0
     global_tokens = 0
+    waiting_token_input = False
     lock = threading.Lock()
 
 def _save_session_id(sid):
@@ -173,6 +176,20 @@ def tg_api(method, params):
         return None
     except Exception as e:
         log.error("TG API %s error: %s", method, e)
+        return None
+
+def _tg_api_raw(token, method, params=None):
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    try:
+        if params:
+            data = urllib.parse.urlencode(params).encode()
+            req = urllib.request.Request(url, data=data)
+        else:
+            req = urllib.request.Request(url)
+        resp = urllib.request.urlopen(req, timeout=15)
+        return json.loads(resp.read().decode())
+    except Exception as e:
+        log.error("TG API raw %s error: %s", method, e)
         return None
 
 def send_text(text, parse_mode=None):
@@ -577,7 +594,80 @@ def _token_footer():
     count = _get_tokens(period)
     labels = {"session": "session", "day": time.strftime("%Y-%m-%d"),
               "month": time.strftime("%Y-%m"), "year": time.strftime("%Y"), "total": "total"}
+    # Add remote tokens if enabled
+    if settings.get("show_remote_tokens") and REMOTE_BOTS and period != "session":
+        period_key = {"day": "d", "month": "m", "year": "y", "total": "t"}.get(period)
+        if period_key:
+            for bot in REMOTE_BOTS:
+                remote = _fetch_remote_tokens(bot.get("token", ""))
+                if remote:
+                    count += remote.get(period_key, 0)
     return f"{labels[period]} tokens: {count:,}"
+
+PUBLISH_LANG = "zu"  # Language code used as data channel (Zulu - won't affect English users)
+PUBLISH_INTERVAL = 300  # seconds (5 minutes)
+
+def _compute_all_period_tokens():
+    """Compute token totals for all periods in a single structure."""
+    import glob
+    result = {}
+    today = time.strftime("%Y-%m-%d")
+    month = time.strftime("%Y-%m")
+    year = time.strftime("%Y")
+    period_totals = {"d": 0, "m": 0, "y": 0, "t": 0}
+    session_count = 0
+    for proj in _find_project_dirs():
+        for fp in glob.glob(os.path.join(proj, "*.jsonl")):
+            try:
+                mt = time.localtime(os.path.getmtime(fp))
+                tokens = _scan_jsonl_tokens(fp)
+                if tokens > 0:
+                    session_count += 1
+                    period_totals["t"] += tokens
+                    if time.strftime("%Y", mt) == year:
+                        period_totals["y"] += tokens
+                    if time.strftime("%Y-%m", mt) == month:
+                        period_totals["m"] += tokens
+                    if time.strftime("%Y-%m-%d", mt) == today:
+                        period_totals["d"] += tokens
+            except Exception:
+                continue
+    return {"d": period_totals["d"], "m": period_totals["m"],
+            "y": period_totals["y"], "t": period_totals["t"],
+            "s": session_count, "ts": int(time.time())}
+
+def _publish_token_data():
+    """Store aggregated token data in bot's own description (language_code='zu')."""
+    data = _compute_all_period_tokens()
+    desc = json.dumps(data, separators=(",", ":"))
+    result = _tg_api_raw(BOT_TOKEN, "setMyDescription",
+                         {"description": desc, "language_code": PUBLISH_LANG})
+    if result and result.get("ok"):
+        log.info("Token data published: %d chars", len(desc))
+    else:
+        log.warning("Token data publish failed")
+
+def _fetch_remote_tokens(bot_token):
+    """Read token data from another bot's description."""
+    result = _tg_api_raw(bot_token, "getMyDescription",
+                         {"language_code": PUBLISH_LANG})
+    if not result or not result.get("ok"):
+        return None
+    desc = result.get("result", {}).get("description", "")
+    if not desc:
+        return None
+    try:
+        return json.loads(desc)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+def _get_remote_bot_info(bot_token):
+    """Get bot name and username from token via getMe."""
+    result = _tg_api_raw(bot_token, "getMe")
+    if not result or not result.get("ok"):
+        return None
+    bot = result.get("result", {})
+    return {"name": bot.get("first_name", ""), "username": bot.get("username", "")}
 
 def get_global_usage():
     total_cost = 0.0
@@ -620,6 +710,182 @@ def get_global_usage():
     return total_cost, total_input, total_output, session_count
 
 # --- Command handlers ---
+def _save_remote_bots():
+    """Save remote_bots list to config.json."""
+    global REMOTE_BOTS
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg["remote_bots"] = REMOTE_BOTS
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=4, ensure_ascii=False)
+    except Exception:
+        pass
+
+def handle_total_tokens():
+    """Show total tokens menu with inline keyboard."""
+    my_info = _tg_api_raw(BOT_TOKEN, "getMe")
+    my_name = ""
+    if my_info and my_info.get("ok"):
+        my_name = f"@{my_info['result'].get('username', 'unknown')}"
+    remote_count = len(REMOTE_BOTS)
+    remote_info = f"\nConnected PCs: {remote_count}" if remote_count > 0 else "\nConnected PCs: None"
+    msg = (f"<b>📊 Total PC Token Usage</b>\n{chr(9473)*25}\n"
+           f"Current bot: <code>{escape_html(my_name)}</code>"
+           f"{remote_info}\n{'━'*25}")
+    buttons = [
+        [{"text": "Usage Summary", "callback_data": "tt:aggregate"}],
+        [{"text": "Connect PC", "callback_data": "tt:connect"},
+         {"text": "Manage PCs", "callback_data": "tt:manage"}],
+        [{"text": "Close", "callback_data": "tt:close"}],
+    ]
+    tg_api("sendMessage", {
+        "chat_id": CHAT_ID,
+        "text": msg,
+        "parse_mode": "HTML",
+        "reply_markup": json.dumps({"inline_keyboard": buttons}),
+    })
+
+def _handle_aggregate():
+    """Aggregate tokens from local + all remote bots."""
+    send_html("<i>Aggregating...</i>")
+    _publish_token_data()
+    local_data = _compute_all_period_tokens()
+    my_info = _tg_api_raw(BOT_TOKEN, "getMe")
+    my_name = f"@{my_info['result'].get('username', '')}" if my_info and my_info.get("ok") else "This PC"
+    period_labels = {"d": "Day", "m": "Month", "y": "Year", "t": "Total"}
+    lines = [f"<b>📊 Total Token Usage Summary</b>\n{chr(9473)*25}"]
+    lines.append(f"\n<b>{escape_html(my_name)}</b> (This PC)")
+    for p, label in period_labels.items():
+        lines.append(f"  {label}: {local_data.get(p, 0):,}")
+    lines.append(f"  Sessions: {local_data.get('s', 0)}")
+    totals = {p: local_data.get(p, 0) for p in period_labels}
+    total_sessions = local_data.get("s", 0)
+    for bot in REMOTE_BOTS:
+        token = bot.get("token", "")
+        name = bot.get("username", bot.get("name", "Unknown"))
+        remote_data = _fetch_remote_tokens(token)
+        if remote_data:
+            lines.append(f"\n<b>@{escape_html(name)}</b>")
+            for p, label in period_labels.items():
+                val = remote_data.get(p, 0)
+                lines.append(f"  {label}: {val:,}")
+                totals[p] += val
+            rs = remote_data.get("s", 0)
+            lines.append(f"  Sessions: {rs}")
+            total_sessions += rs
+            ts = remote_data.get("ts", 0)
+            if ts:
+                updated = time.strftime("%m/%d %H:%M", time.localtime(ts))
+                lines.append(f"  <i>Last updated: {updated}</i>")
+        else:
+            lines.append(f"\n<b>@{escape_html(name)}</b>")
+            lines.append("  <i>⚠️ Unable to fetch data (check if bot is running)</i>")
+    if REMOTE_BOTS:
+        lines.append(f"\n{chr(9473)*25}\n<b>Total</b>")
+        for p, label in period_labels.items():
+            lines.append(f"  {label}: {totals[p]:,}")
+        lines.append(f"  Sessions: {total_sessions}")
+    send_html("\n".join(lines))
+
+def _handle_connect():
+    """Start token input mode for connecting another PC."""
+    state.waiting_token_input = True
+    send_html(
+        f"<b>📊 Enter the bot token of another PC:</b>\n{chr(9473)*25}\n"
+        "Enter the token of the other PC's bot.\n"
+        "(@BotFather → select bot → API Token)\n\n"
+        "<i>Send /cancel_connect to cancel.</i>")
+
+def _handle_token_input(text):
+    """Process bot token input for remote PC connection."""
+    state.waiting_token_input = False
+    token = text.strip()
+    if not re.match(r'^\d+:[A-Za-z0-9_-]+$', token):
+        send_html("❌ Invalid bot token.")
+        return
+    for bot in REMOTE_BOTS:
+        if bot.get("token") == token:
+            send_html(f"❌ This bot is already registered: @{escape_html(bot.get('username', ''))}")
+            return
+    if token == BOT_TOKEN:
+        send_html("<b>Error:</b> Cannot connect the current bot's own token.")
+        return
+    info = _get_remote_bot_info(token)
+    if not info:
+        send_html("❌ Invalid bot token.")
+        return
+    new_bot = {"token": token, "name": info["name"], "username": info["username"]}
+    REMOTE_BOTS.append(new_bot)
+    _save_remote_bots()
+    send_html(
+        f"✅ Connected!\n{chr(9473)*25}\n"
+        f"Bot Name: {escape_html(info['name'])}\n"
+        f"Username: @{escape_html(info['username'])}\n"
+        f"{'━'*25}\n"
+        f"<i>The bot must also be running on that PC to fetch data.</i>")
+    log.info("Remote bot connected: @%s", info["username"])
+
+def _handle_manage():
+    """Show connected PCs management UI."""
+    if not REMOTE_BOTS:
+        send_html(f"<b>📋 Connected PCs</b>\nNo connected PCs.")
+        return
+    lines = [f"<b>📋 Connected PCs</b>\n{chr(9473)*25}"]
+    buttons = []
+    for i, bot in enumerate(REMOTE_BOTS):
+        name = bot.get("username", bot.get("name", "Unknown"))
+        lines.append(f"  <b>{i+1}.</b> @{escape_html(name)}")
+        buttons.append([{"text": f"{i+1}. @{name} Delete", "callback_data": f"tt:del:{i}"}])
+    buttons.append([{"text": "Close", "callback_data": "tt:close"}])
+    tg_api("sendMessage", {
+        "chat_id": CHAT_ID,
+        "text": "\n".join(lines),
+        "parse_mode": "HTML",
+        "reply_markup": json.dumps({"inline_keyboard": buttons}),
+    })
+
+def _handle_delete_remote(index):
+    """Delete a remote bot connection."""
+    global REMOTE_BOTS
+    if 0 <= index < len(REMOTE_BOTS):
+        removed = REMOTE_BOTS.pop(index)
+        _save_remote_bots()
+        name = removed.get("username", removed.get("name", ""))
+        return f"✅ Deleted: @{name}"
+    return "Invalid index"
+
+def handle_total_tokens_callback(callback_id, msg_id, data):
+    """Handle inline keyboard callbacks for /total_tokens."""
+    action = data.split(":", 1)[1] if ":" in data else ""
+    if action == "close":
+        tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
+        tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
+        return
+    if action == "aggregate":
+        tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": "Aggregating..."})
+        threading.Thread(target=_handle_aggregate, daemon=True).start()
+        return
+    if action == "connect":
+        tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
+        _handle_connect()
+        return
+    if action == "manage":
+        tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
+        _handle_manage()
+        return
+    if action.startswith("del:"):
+        try:
+            index = int(action.split(":")[1])
+            result_text = _handle_delete_remote(index)
+            tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": result_text})
+            tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
+            _handle_manage()
+        except (ValueError, IndexError):
+            tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": "Error"})
+        return
+    tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
+
 def handle_session():
     sessions = get_sessions(10)
     state.session_list = sessions
@@ -887,6 +1153,7 @@ SETTINGS_KEYS = [
     ("show_cost", "Cost per request", "Cost/token info after response"),
     ("show_status", "Status messages", "Tool usage during processing"),
     ("show_global_cost", "Global cost", "Cumulative cost in /cost"),
+    ("show_remote_tokens", "Aggregate remote PC tokens", "Total PC token usage summary"),
 ]
 
 def _settings_keyboard():
@@ -1148,6 +1415,9 @@ def process_update(update):
         if data.startswith("stg:"):
             msg_id = cb.get("message", {}).get("message_id")
             handle_settings_callback(cb["id"], msg_id, data)
+        if data.startswith("tt:"):
+            msg_id = cb.get("message", {}).get("message_id")
+            handle_total_tokens_callback(cb["id"], msg_id, data)
         return
     msg = update.get("message")
     if not msg: return
@@ -1191,6 +1461,11 @@ def process_update(update):
     elif lower.startswith("/cd"): handle_cd(text)
     elif lower.startswith("/ls"): handle_ls(text)
     elif lower in ("/update_bot", "/update"): handle_update_bot()
+    elif lower in ("/total_tokens", "/totaltokens"): handle_total_tokens()
+    elif lower == "/cancel_connect":
+        state.waiting_token_input = False
+        send_html("Input cancelled.")
+    elif state.waiting_token_input: _handle_token_input(text)
     elif state.answering: handle_answer(text)
     elif state.selecting: handle_selection(text)
     else:
@@ -1215,6 +1490,7 @@ BOT_COMMANDS = [
     ("cd", "Change directory"),
     ("ls", "List files/folders"),
     ("update_bot", "Update bot"),
+    ("total_tokens", "Total PC token usage summary"),
     ("analyze", "Deep analysis & debugging"),
     ("autopilot", "Autonomous execution"),
     ("build_fix", "Fix build errors"),
@@ -1264,6 +1540,17 @@ def poll_loop():
     offset = 0
     log.info("Bot started.")
     _sync_bot_commands()
+    # Start token data publishing thread
+    def _token_publish_loop():
+        time.sleep(10)  # Wait for bot to stabilize
+        while True:
+            try:
+                _publish_token_data()
+            except Exception as e:
+                log.error("Token publish error: %s", e)
+            time.sleep(PUBLISH_INTERVAL)
+    threading.Thread(target=_token_publish_loop, daemon=True).start()
+    log.info("Token publish thread started (interval: %ds)", PUBLISH_INTERVAL)
     state.global_tokens = _get_monthly_tokens()
     log.info("Monthly tokens loaded: %d", state.global_tokens)
     send_html("<b>Claude Code Bot started</b>\nSend /help to see available commands.")
