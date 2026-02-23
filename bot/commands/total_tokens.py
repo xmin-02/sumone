@@ -65,7 +65,7 @@ def handle_total_tokens(text):
 
 
 def _handle_aggregate():
-    send_html(f"<i>{t('total_tokens.aggregating')}</i>")
+    _track_submenu(send_html(f"<i>{t('total_tokens.aggregating')}</i>"))
     publish_token_data()
     local_data = compute_all_period_tokens()
     my_info = tg_api_raw(BOT_TOKEN, "getMe")
@@ -105,7 +105,7 @@ def _handle_aggregate():
         for p, label in period_labels.items():
             lines.append(f"  {label}: {totals[p]:,}")
         lines.append(f"  {t('total_tokens.sessions_count', count=total_sessions)}")
-    send_html("\n".join(lines))
+    _track_submenu(send_html("\n".join(lines)))
 
 
 def _handle_connect():
@@ -146,12 +146,12 @@ def handle_token_input(text, user_msg_id=None):
     new_bot = {"token": token, "name": info["name"], "username": info["username"]}
     config.REMOTE_BOTS.append(new_bot)
     _save_remote_bots()
-    send_html(
+    _track_submenu(send_html(
         f"<b>{t('total_tokens.connect_done')}</b>\n{'━'*25}\n"
         f"{t('total_tokens.bot_name')}: {escape_html(info['name'])}\n"
         f"{t('total_tokens.username')}: @{escape_html(info['username'])}\n"
         f"{'━'*25}\n"
-        f"<i>{t('total_tokens.connect_note')}</i>")
+        f"<i>{t('total_tokens.connect_note')}</i>"))
     log.info("Remote bot connected: @%s", info["username"])
 
 
