@@ -16,10 +16,6 @@ from telegram import escape_html, send_html
 def _update_profile_photo():
     """Download logo from GitHub and set as bot profile photo if changed."""
     install_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    # install_dir should be the bot/ directory
-    install_dir = os.path.dirname(os.path.abspath(__file__))
-    # Actually, we need the bot/ dir. __file__ is commands/update.py, so:
-    install_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cached_logo = os.path.join(install_dir, ".logo_cache.png")
     tmp_logo = os.path.join(install_dir, ".logo_new.png")
     try:
@@ -59,6 +55,52 @@ def _update_profile_photo():
     return False
 
 
+def _fetch_bot_file_list():
+    """Fetch list of all files under bot/ from GitHub tree API."""
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/trees/main?recursive=1"
+    req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github.v3+json"})
+    resp = urllib.request.urlopen(req, timeout=15)
+    tree = json.loads(resp.read().decode())
+    files = []
+    for item in tree.get("tree", []):
+        if item["type"] == "blob" and item["path"].startswith("bot/"):
+            rel_path = item["path"][4:]  # strip "bot/" prefix
+            files.append(rel_path)
+    return files
+
+
+def _update_all_files(bot_dir):
+    """Download all bot files from GitHub, return (updated, added) lists."""
+    files = _fetch_bot_file_list()
+    updated = []
+    added = []
+    for rel_path in files:
+        local_path = os.path.join(bot_dir, rel_path)
+        raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/bot/{rel_path}"
+        tmp_path = local_path + ".new"
+        try:
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            urllib.request.urlretrieve(raw_url, tmp_path)
+            if os.path.exists(local_path):
+                with open(local_path, "rb") as f:
+                    old_hash = hashlib.sha256(f.read()).hexdigest()
+                with open(tmp_path, "rb") as f:
+                    new_hash = hashlib.sha256(f.read()).hexdigest()
+                if old_hash == new_hash:
+                    os.remove(tmp_path)
+                    continue
+                os.replace(tmp_path, local_path)
+                updated.append(rel_path)
+            else:
+                os.replace(tmp_path, local_path)
+                added.append(rel_path)
+        except Exception as e:
+            log.warning("Failed to update %s: %s", rel_path, e)
+            try: os.remove(tmp_path)
+            except Exception: pass
+    return updated, added
+
+
 def _fetch_patch_notes():
     last_update = _config.get("last_update", "")
     if not last_update:
@@ -69,8 +111,7 @@ def _fetch_patch_notes():
         else:
             local_mtime = time.time()
         last_update = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(local_mtime))
-    file_path = "bot/main.py"
-    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?path={file_path}&since={last_update}&per_page=20"
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?path=bot&since={last_update}&per_page=20"
     try:
         req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github.v3+json"})
         resp = urllib.request.urlopen(req, timeout=10)
@@ -93,31 +134,29 @@ def _fetch_patch_notes():
 def handle_update_bot(text):
     send_html(f"<i>{t('update.checking')}</i>")
     bot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    bot_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/bot/main.py"
-    current_path = os.path.join(bot_dir, "main.py")
-    new_path = current_path + ".new"
     try:
         photo_updated = _update_profile_photo()
-        urllib.request.urlretrieve(bot_url, new_path)
-        with open(current_path, encoding="utf-8") as f:
-            old_content = f.read()
-        with open(new_path, encoding="utf-8") as f:
-            new_content = f.read()
-        if old_content == new_content:
-            os.remove(new_path)
+        updated, added = _update_all_files(bot_dir)
+        if not updated and not added:
             if photo_updated:
                 send_html(f"<b>{t('update.photo_updated')}</b>")
             else:
                 send_html(f"<b>{t('update.up_to_date')}</b>")
             return
         patch_notes = _fetch_patch_notes()
-        os.replace(new_path, current_path)
+        summary = []
+        if updated:
+            summary.append(f"Updated: {len(updated)}")
+        if added:
+            summary.append(f"New: {len(added)}")
         update_config("last_update", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-        send_html(f"<b>{t('update.complete')}</b>\n{'━'*25}\n{escape_html(patch_notes)}\n{'━'*25}\n<i>{t('update.restarting')}</i>")
+        send_html(
+            f"<b>{t('update.complete')}</b> ({', '.join(summary)} files)\n"
+            f"{'━'*25}\n{escape_html(patch_notes)}\n{'━'*25}\n"
+            f"<i>{t('update.restarting')}</i>"
+        )
         time.sleep(1)
-        os.execv(sys.executable, [sys.executable, current_path])
+        main_path = os.path.join(bot_dir, "main.py")
+        os.execv(sys.executable, [sys.executable, main_path])
     except Exception as e:
-        if os.path.exists(new_path):
-            try: os.remove(new_path)
-            except Exception: pass
         send_html(f"<b>{t('update.failed')}:</b> {escape_html(str(e))}")
