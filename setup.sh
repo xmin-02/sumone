@@ -79,8 +79,13 @@ get_user_input() {
     fi
     echo -e "${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    echo "1. @BotFather → /newbot → Copy token"
-    echo "2. @userinfobot → /start → Copy Chat ID"
+    if [[ "$LANG" == "ko" ]]; then
+        echo "1. @BotFather → /newbot → 토큰 복사"
+        echo "2. 토큰 입력 후 봇에게 메시지를 보내면 Chat ID 자동 감지"
+    else
+        echo "1. @BotFather → /newbot → Copy token"
+        echo "2. After entering token, send a message to your bot for auto Chat ID detection"
+    fi
     echo ""
 
     while true; do
@@ -89,11 +94,57 @@ get_user_input() {
         err "Invalid token format"
     done
 
-    while true; do
-        read -rp "$(echo -e "${CYAN}Chat ID: ${NC}")" CHAT_ID
-        [[ "$CHAT_ID" =~ ^-?[0-9]+$ ]] && break
-        err "Invalid Chat ID"
-    done
+    # --- Auto-detect Chat ID via getUpdates polling ---
+    # Flush existing messages
+    $PYTHON -c "
+import urllib.request
+try: urllib.request.urlopen('https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=-1&limit=1', timeout=5)
+except Exception: pass
+" 2>/dev/null
+
+    echo ""
+    if [[ "$LANG" == "ko" ]]; then
+        info "Telegram에서 봇에게 아무 메시지를 보내주세요... (60초 대기)"
+    else
+        info "Send any message to your bot in Telegram... (waiting 60s)"
+    fi
+
+    CHAT_ID=$($PYTHON -c "
+import urllib.request, json, time
+token = '${BOT_TOKEN}'
+deadline = time.time() + 60
+while time.time() < deadline:
+    try:
+        r = urllib.request.urlopen(f'https://api.telegram.org/bot{token}/getUpdates?timeout=5&limit=1', timeout=10)
+        data = json.loads(r.read())
+        if data.get('ok') and data.get('result'):
+            msg = data['result'][0]
+            chat_id = msg.get('message', {}).get('chat', {}).get('id')
+            if chat_id:
+                # Acknowledge the update so it won't appear again
+                update_id = msg.get('update_id', 0)
+                urllib.request.urlopen(f'https://api.telegram.org/bot{token}/getUpdates?offset={update_id+1}&limit=1', timeout=5)
+                print(chat_id)
+                break
+    except Exception:
+        pass
+    time.sleep(2)
+" 2>/dev/null)
+
+    if [[ -n "$CHAT_ID" ]]; then
+        ok "Chat ID detected: $CHAT_ID"
+    else
+        if [[ "$LANG" == "ko" ]]; then
+            warn "자동 감지 실패. 수동으로 입력해주세요."
+        else
+            warn "Auto-detection failed. Please enter manually."
+        fi
+        while true; do
+            read -rp "$(echo -e "${CYAN}Chat ID: ${NC}")" CHAT_ID
+            [[ "$CHAT_ID" =~ ^-?[0-9]+$ ]] && break
+            err "Invalid Chat ID"
+        done
+    fi
 
     DEFAULT_WORKDIR="$HOME"
     read -rp "$(echo -e "${CYAN}Working directory [$DEFAULT_WORKDIR]: ${NC}")" WORK_DIR

@@ -73,8 +73,13 @@ function Get-UserInput {
     Write-Host " Telegram Bot Setup" -ForegroundColor White
     Write-Host "========================================" -ForegroundColor White
     Write-Host ""
-    Write-Host "1. @BotFather -> /newbot -> Copy token"
-    Write-Host "2. @userinfobot -> /start -> Copy Chat ID"
+    if ($script:LANG -eq "ko") {
+        Write-Host "1. @BotFather -> /newbot -> 토큰 복사"
+        Write-Host "2. 토큰 입력 후 봇에게 메시지를 보내면 Chat ID 자동 감지"
+    } else {
+        Write-Host "1. @BotFather -> /newbot -> Copy token"
+        Write-Host "2. After entering token, send a message to your bot for auto Chat ID detection"
+    }
     Write-Host ""
 
     do {
@@ -83,11 +88,62 @@ function Get-UserInput {
         Write-Err "Invalid token format"
     } while ($true)
 
-    do {
-        $script:CHAT_ID = Read-Host "Chat ID"
-        if ($script:CHAT_ID -match '^-?\d+$') { break }
-        Write-Err "Invalid Chat ID"
-    } while ($true)
+    # --- Auto-detect Chat ID via getUpdates polling ---
+    # Flush existing messages
+    try {
+        & $script:PYTHON -c @"
+import urllib.request
+try: urllib.request.urlopen('https://api.telegram.org/bot$($script:BOT_TOKEN)/getUpdates?offset=-1&limit=1', timeout=5)
+except Exception: pass
+"@ 2>$null
+    } catch {}
+
+    Write-Host ""
+    if ($script:LANG -eq "ko") {
+        Write-Info "Telegram에서 봇에게 아무 메시지를 보내주세요... (60초 대기)"
+    } else {
+        Write-Info "Send any message to your bot in Telegram... (waiting 60s)"
+    }
+
+    $detectedId = $null
+    try {
+        $detectedId = & $script:PYTHON -c @"
+import urllib.request, json, time
+token = '$($script:BOT_TOKEN)'
+deadline = time.time() + 60
+while time.time() < deadline:
+    try:
+        r = urllib.request.urlopen(f'https://api.telegram.org/bot{token}/getUpdates?timeout=5&limit=1', timeout=10)
+        data = json.loads(r.read())
+        if data.get('ok') and data.get('result'):
+            msg = data['result'][0]
+            chat_id = msg.get('message', {}).get('chat', {}).get('id')
+            if chat_id:
+                update_id = msg.get('update_id', 0)
+                urllib.request.urlopen(f'https://api.telegram.org/bot{token}/getUpdates?offset={update_id+1}&limit=1', timeout=5)
+                print(chat_id)
+                break
+    except Exception:
+        pass
+    time.sleep(2)
+"@ 2>$null
+    } catch {}
+
+    if ($detectedId -and $detectedId -match '^-?\d+$') {
+        $script:CHAT_ID = $detectedId.Trim()
+        Write-Ok "Chat ID detected: $($script:CHAT_ID)"
+    } else {
+        if ($script:LANG -eq "ko") {
+            Write-Warn "자동 감지 실패. 수동으로 입력해주세요."
+        } else {
+            Write-Warn "Auto-detection failed. Please enter manually."
+        }
+        do {
+            $script:CHAT_ID = Read-Host "Chat ID"
+            if ($script:CHAT_ID -match '^-?\d+$') { break }
+            Write-Err "Invalid Chat ID"
+        } while ($true)
+    }
 
     $defaultDir = $env:USERPROFILE
     $input = Read-Host "Working directory [$defaultDir]"
