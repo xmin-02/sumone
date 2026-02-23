@@ -242,27 +242,31 @@ def _sync_bot_commands():
 
 def _kill_duplicate_bots():
     """Find and kill other bot processes (same script), return count killed."""
+    import subprocess as _sp
     my_pid = os.getpid()
     killed = 0
     bot_scripts = {"main.py", "telegram-bot-ko.py", "telegram-bot-en.py", "telegram-bot.py"}
     try:
         if IS_WINDOWS:
-            import subprocess as _sp
+            # Use PowerShell (wmic is removed in newer Windows)
+            ps_cmd = (
+                "Get-CimInstance Win32_Process -Filter \"Name like '%python%'\" "
+                "| Select-Object ProcessId, CommandLine "
+                "| ForEach-Object { \"$($_.ProcessId)|$($_.CommandLine)\" }"
+            )
             out = _sp.check_output(
-                ["wmic", "process", "where",
-                 "Name like '%python%'",
-                 "get", "ProcessId,CommandLine", "/FORMAT:CSV"],
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
                 creationflags=_sp.CREATE_NO_WINDOW,
                 timeout=10,
             ).decode("utf-8", errors="replace")
             for line in out.strip().splitlines():
-                parts = line.strip().split(",", 2)
-                if len(parts) < 3:
+                line = line.strip()
+                if "|" not in line:
                     continue
-                cmdline = parts[1]
+                pid_str, cmdline = line.split("|", 1)
                 try:
-                    pid = int(parts[2])
-                except (ValueError, IndexError):
+                    pid = int(pid_str.strip())
+                except ValueError:
                     continue
                 if pid == my_pid:
                     continue
@@ -274,7 +278,6 @@ def _kill_duplicate_bots():
                     except OSError:
                         pass
         else:
-            import subprocess as _sp
             out = _sp.check_output(
                 ["ps", "-eo", "pid,args"],
                 timeout=10,
