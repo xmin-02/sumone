@@ -59,7 +59,7 @@ TOKEN_LABELS = {"session": "세션", "day": "일", "month": "월", "year": "년"
 settings = {**DEFAULT_SETTINGS, **_config.get("settings", {})}
 
 MAX_MSG_LEN = 3900
-MAX_PARTS = 5
+MAX_PARTS = 20
 POLL_TIMEOUT = 30
 
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot.log")
