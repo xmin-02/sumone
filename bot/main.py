@@ -382,7 +382,61 @@ def poll_loop():
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _bootstrap_files():
+    """One-time full sync if local update.py lacks the new all-files updater."""
+    bot_dir = os.path.dirname(os.path.abspath(__file__))
+    update_path = os.path.join(bot_dir, "commands", "update.py")
+    marker = "_fetch_bot_file_list"
+    try:
+        with open(update_path, encoding="utf-8") as f:
+            if marker in f.read():
+                return  # already up to date
+    except FileNotFoundError:
+        pass  # file missing, need bootstrap
+
+    import hashlib
+    import urllib.request
+    github_repo = config._config.get("github_repo", "xmin-02/Claude-telegram-bot")
+    log.info("Bootstrap: syncing all bot files from GitHub...")
+    try:
+        api_url = f"https://api.github.com/repos/{github_repo}/git/trees/main?recursive=1"
+        req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github.v3+json"})
+        resp = urllib.request.urlopen(req, timeout=15)
+        tree = json.loads(resp.read().decode())
+        count = 0
+        for item in tree.get("tree", []):
+            if item["type"] != "blob" or not item["path"].startswith("bot/"):
+                continue
+            rel_path = item["path"][4:]
+            local_path = os.path.join(bot_dir, rel_path)
+            raw_url = f"https://raw.githubusercontent.com/{github_repo}/main/bot/{rel_path}"
+            tmp_path = local_path + ".new"
+            try:
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                urllib.request.urlretrieve(raw_url, tmp_path)
+                if os.path.exists(local_path):
+                    with open(local_path, "rb") as f:
+                        old_hash = hashlib.sha256(f.read()).hexdigest()
+                    with open(tmp_path, "rb") as f:
+                        new_hash = hashlib.sha256(f.read()).hexdigest()
+                    if old_hash == new_hash:
+                        os.remove(tmp_path)
+                        continue
+                os.replace(tmp_path, local_path)
+                count += 1
+            except Exception:
+                try: os.remove(tmp_path)
+                except Exception: pass
+        log.info("Bootstrap complete: %d files updated", count)
+        if count > 0:
+            log.info("Restarting after bootstrap...")
+            os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
+    except Exception as e:
+        log.warning("Bootstrap failed (non-fatal): %s", e)
+
+
 def main():
+    _bootstrap_files()
     i18n.load(config.LANG)
 
     def sig_handler(signum, frame):
