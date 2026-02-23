@@ -210,7 +210,7 @@ def process_update(update):
         return
 
     if state.waiting_token_input:
-        handle_token_input(text)
+        handle_token_input(text, user_msg_id=msg.get("message_id"))
         return
 
     if state.answering:

@@ -2,12 +2,44 @@
 import json
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from config import BOT_TOKEN, CHAT_ID, POLL_TIMEOUT, MAX_MSG_LEN, MAX_PARTS, log
+
+# ---------------------------------------------------------------------------
+# Auto-dismiss: auto-delete inline keyboard messages after inactivity
+# ---------------------------------------------------------------------------
+_dismiss_timers = {}  # msg_id -> Timer
+
+
+def schedule_auto_dismiss(msg_id, timeout=60):
+    """Schedule a message for auto-deletion after timeout seconds."""
+    cancel_auto_dismiss(msg_id)
+
+    def _dismiss():
+        _dismiss_timers.pop(msg_id, None)
+        delete_msg(msg_id)
+
+    timer = threading.Timer(timeout, _dismiss)
+    timer.daemon = True
+    timer.start()
+    _dismiss_timers[msg_id] = timer
+
+
+def cancel_auto_dismiss(msg_id):
+    """Cancel auto-dismiss for a message."""
+    timer = _dismiss_timers.pop(msg_id, None)
+    if timer:
+        timer.cancel()
+
+
+def reset_auto_dismiss(msg_id, timeout=60):
+    """Reset the auto-dismiss timer (call on each user interaction)."""
+    schedule_auto_dismiss(msg_id, timeout)
 
 
 def escape_html(text):
