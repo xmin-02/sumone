@@ -109,21 +109,50 @@ function Get-UserInput {
 # --- Download & Install ---
 function Install-Bot {
     $script:INSTALL_DIR = Join-Path $env:USERPROFILE ".claude-telegram-bot"
-    $script:BOT_PATH = Join-Path $script:INSTALL_DIR "telegram-bot.py"
+    $script:BOT_PATH = Join-Path $script:INSTALL_DIR "main.py"
     $script:CONFIG_PATH = Join-Path $script:INSTALL_DIR "config.json"
 
-    if (-not (Test-Path $script:INSTALL_DIR)) {
-        New-Item -ItemType Directory -Path $script:INSTALL_DIR -Force | Out-Null
+    foreach ($sub in @("", "i18n", "commands")) {
+        $dir = if ($sub) { Join-Path $script:INSTALL_DIR $sub } else { $script:INSTALL_DIR }
+        if (-not (Test-Path $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
     }
 
     Write-Info "Downloading bot from GitHub..."
-    $botUrl = "$GITHUB_RAW/bot/telegram-bot-$($script:LANG).py"
-    try {
-        Invoke-WebRequest -Uri $botUrl -OutFile $script:BOT_PATH -ErrorAction Stop
-        Write-Ok "Bot downloaded: $($script:BOT_PATH)"
-    } catch {
-        Write-Err "Download failed: $_"; exit 1
+    $files = @(
+        @("bot/main.py",                    "main.py"),
+        @("bot/config.py",                  "config.py"),
+        @("bot/state.py",                   "state.py"),
+        @("bot/telegram.py",                "telegram.py"),
+        @("bot/claude.py",                  "claude.py"),
+        @("bot/tokens.py",                  "tokens.py"),
+        @("bot/sessions.py",                "sessions.py"),
+        @("bot/downloader.py",              "downloader.py"),
+        @("bot/i18n/__init__.py",           "i18n/__init__.py"),
+        @("bot/i18n/ko.json",               "i18n/ko.json"),
+        @("bot/i18n/en.json",               "i18n/en.json"),
+        @("bot/commands/__init__.py",        "commands/__init__.py"),
+        @("bot/commands/basic.py",           "commands/basic.py"),
+        @("bot/commands/filesystem.py",      "commands/filesystem.py"),
+        @("bot/commands/settings.py",        "commands/settings.py"),
+        @("bot/commands/update.py",          "commands/update.py"),
+        @("bot/commands/total_tokens.py",    "commands/total_tokens.py"),
+        @("bot/commands/skills.py",          "commands/skills.py"),
+        @("bot/commands/session_cmd.py",     "commands/session_cmd.py")
+    )
+
+    foreach ($entry in $files) {
+        $src = $entry[0]; $dest = $entry[1]
+        $url = "$GITHUB_RAW/$src"
+        $outPath = Join-Path $script:INSTALL_DIR $dest
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $outPath -ErrorAction Stop
+        } catch {
+            Write-Err "Download failed: $url ($_)"; exit 1
+        }
     }
+    Write-Ok "Bot downloaded: $($script:INSTALL_DIR) ($($files.Count) files)"
 
     # Create config.json
     $config = @{

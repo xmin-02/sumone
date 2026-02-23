@@ -17,7 +17,7 @@ err()   { echo -e "${RED}[ERROR]${NC} $*"; }
 GITHUB_REPO="xmin-02/Claude-telegram-bot"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 INSTALL_DIR="$HOME/.claude-telegram-bot"
-BOT_PATH="$INSTALL_DIR/telegram-bot.py"
+BOT_PATH="$INSTALL_DIR/main.py"
 CONFIG_PATH="$INSTALL_DIR/config.json"
 
 # --- OS Detection ---
@@ -102,19 +102,50 @@ get_user_input() {
 }
 
 # --- Download & Install ---
+_dl() {
+    # _dl <url> <dest> — download a single file
+    local url="$1" dest="$2"
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$url" -o "$dest" || { err "Download failed: $url"; exit 1; }
+    elif command -v wget &>/dev/null; then
+        wget -q "$url" -O "$dest" || { err "Download failed: $url"; exit 1; }
+    else
+        $PYTHON -c "import urllib.request; urllib.request.urlretrieve('$url', '$dest')" || { err "Download failed: $url"; exit 1; }
+    fi
+}
+
 install_bot() {
-    mkdir -p "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR/i18n" "$INSTALL_DIR/commands"
     info "Downloading bot from GitHub..."
 
-    local bot_url="${GITHUB_RAW}/bot/telegram-bot-${LANG}.py"
-    if command -v curl &>/dev/null; then
-        curl -fsSL "$bot_url" -o "$BOT_PATH" || { err "Download failed: $bot_url"; exit 1; }
-    elif command -v wget &>/dev/null; then
-        wget -q "$bot_url" -O "$BOT_PATH" || { err "Download failed: $bot_url"; exit 1; }
-    else
-        $PYTHON -c "import urllib.request; urllib.request.urlretrieve('$bot_url', '$BOT_PATH')" || { err "Download failed"; exit 1; }
-    fi
-    ok "Bot downloaded: $BOT_PATH"
+    # Core modules
+    local files=(
+        "bot/main.py:main.py"
+        "bot/config.py:config.py"
+        "bot/state.py:state.py"
+        "bot/telegram.py:telegram.py"
+        "bot/claude.py:claude.py"
+        "bot/tokens.py:tokens.py"
+        "bot/sessions.py:sessions.py"
+        "bot/downloader.py:downloader.py"
+        "bot/i18n/__init__.py:i18n/__init__.py"
+        "bot/i18n/ko.json:i18n/ko.json"
+        "bot/i18n/en.json:i18n/en.json"
+        "bot/commands/__init__.py:commands/__init__.py"
+        "bot/commands/basic.py:commands/basic.py"
+        "bot/commands/filesystem.py:commands/filesystem.py"
+        "bot/commands/settings.py:commands/settings.py"
+        "bot/commands/update.py:commands/update.py"
+        "bot/commands/total_tokens.py:commands/total_tokens.py"
+        "bot/commands/skills.py:commands/skills.py"
+        "bot/commands/session_cmd.py:commands/session_cmd.py"
+    )
+
+    for entry in "${files[@]}"; do
+        local src="${entry%%:*}" dest="${entry##*:}"
+        _dl "${GITHUB_RAW}/${src}" "$INSTALL_DIR/${dest}"
+    done
+    ok "Bot downloaded: $INSTALL_DIR (${#files[@]} files)"
 
     # Create config.json
     cat > "$CONFIG_PATH" << EOF
