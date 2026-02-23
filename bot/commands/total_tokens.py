@@ -13,6 +13,23 @@ from telegram import escape_html, send_html, tg_api, tg_api_raw, delete_msg, sch
 from tokens import publish_token_data, compute_all_period_tokens, fetch_remote_tokens, get_remote_bot_info
 
 
+_submenu_msg_ids = []
+
+
+def _clear_submenus():
+    """Delete all tracked sub-menu messages."""
+    for mid in _submenu_msg_ids:
+        cancel_auto_dismiss(mid)
+        delete_msg(mid)
+    _submenu_msg_ids.clear()
+
+
+def _track_submenu(msg_id):
+    """Track a sub-menu message for later cleanup."""
+    if msg_id:
+        _submenu_msg_ids.append(msg_id)
+
+
 def _save_remote_bots():
     config.update_config("remote_bots", config.REMOTE_BOTS)
 
@@ -98,6 +115,7 @@ def _handle_connect():
         f"{t('total_tokens.connect_prompt')}\n\n"
         f"<i>{t('total_tokens.connect_cancel')}</i>")
     state.connect_prompt_msg_id = prompt_id
+    _track_submenu(prompt_id)
 
 
 def handle_token_input(text, user_msg_id=None):
@@ -155,7 +173,9 @@ def _handle_manage():
         "reply_markup": json.dumps({"inline_keyboard": buttons}),
     })
     if result and result.get("ok"):
-        schedule_auto_dismiss(result["result"]["message_id"])
+        mid = result["result"]["message_id"]
+        schedule_auto_dismiss(mid)
+        _track_submenu(mid)
 
 
 def _handle_delete_remote(index):
@@ -171,35 +191,35 @@ def _handle_delete_remote(index):
 def handle_total_tokens_callback(callback_id, msg_id, data):
     action = data.split(":", 1)[1] if ":" in data else ""
     if action == "close":
+        _clear_submenus()
         cancel_auto_dismiss(msg_id)
         tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         return
     if action == "aggregate":
-        cancel_auto_dismiss(msg_id)
-        tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
+        _clear_submenus()
+        reset_auto_dismiss(msg_id)
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": t("total_tokens.aggregating")})
         threading.Thread(target=_handle_aggregate, daemon=True).start()
         return
     if action == "connect":
-        cancel_auto_dismiss(msg_id)
-        tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
+        _clear_submenus()
+        reset_auto_dismiss(msg_id)
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         _handle_connect()
         return
     if action == "manage":
-        cancel_auto_dismiss(msg_id)
-        tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
+        _clear_submenus()
+        reset_auto_dismiss(msg_id)
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         _handle_manage()
         return
     if action.startswith("del:"):
         try:
-            cancel_auto_dismiss(msg_id)
+            _clear_submenus()
             index = int(action.split(":")[1])
             result_text = _handle_delete_remote(index)
             tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": result_text})
-            tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
             _handle_manage()
         except (ValueError, IndexError):
             tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
