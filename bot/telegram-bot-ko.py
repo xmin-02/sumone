@@ -513,17 +513,9 @@ def _claude_env():
     return env
 
 def _get_monthly_tokens():
-    try:
-        token_file = os.path.expanduser("~/.claude/hooks/.monthly-tokens.json")
-        with open(token_file, encoding="utf-8") as f:
-            data = json.load(f)
-        return (data.get("input", 0) + data.get("output", 0) +
-                data.get("cache_read", 0) + data.get("cache_create", 0))
-    except Exception:
-        return 0
+    return _get_tokens("month")
 
 _token_cache = {}
-_PROJ_DIR = os.path.join(os.path.expanduser("~"), ".claude", "projects")
 
 def _scan_jsonl_tokens(fpath):
     total = 0
@@ -547,13 +539,11 @@ def _scan_jsonl_tokens(fpath):
 
 def _get_tokens(period):
     import glob
-    if period == "month":
-        return _get_monthly_tokens()
     if period == "session":
         sid = state.session_id
         if not sid:
             return 0
-        for proj in glob.glob(os.path.join(_PROJ_DIR, "*")):
+        for proj in _find_project_dirs():
             fp = os.path.join(proj, f"{sid}.jsonl")
             if os.path.exists(fp):
                 return _scan_jsonl_tokens(fp)
@@ -564,12 +554,15 @@ def _get_tokens(period):
         return cached[0]
     total = 0
     today = time.strftime("%Y-%m-%d")
+    month = time.strftime("%Y-%m")
     year = time.strftime("%Y")
-    for proj in glob.glob(os.path.join(_PROJ_DIR, "*")):
+    for proj in _find_project_dirs():
         for fp in glob.glob(os.path.join(proj, "*.jsonl")):
             try:
                 mt = time.localtime(os.path.getmtime(fp))
                 if period == "day" and time.strftime("%Y-%m-%d", mt) != today:
+                    continue
+                if period == "month" and time.strftime("%Y-%m", mt) != month:
                     continue
                 if period == "year" and time.strftime("%Y", mt) != year:
                     continue
