@@ -46,9 +46,18 @@ def handle_message(text):
     """Send user text to Claude CLI and deliver the response."""
     with state.lock:
         if state.busy:
-            send_html(f"<i>{i18n.t('busy')}</i>"); return
+            state.message_queue.append(text)
+            qlen = len(state.message_queue)
+            send_html(f"<i>{i18n.t('queued', pos=qlen)}</i>")
+            log.info("Message queued (pos %d): %s", qlen, text[:80])
+            return
         state.busy = True
 
+    _run_message(text)
+
+
+def _run_message(text):
+    """Internal: execute a single message with typing animation."""
     # Animated typing indicator
     typing_id = [None]
     typing_stop = threading.Event()
@@ -118,8 +127,16 @@ def handle_message(text):
             delete_msg(typing_id[0])
             send_html(f"<i>{i18n.t('error.generic', msg=str(e))}</i>")
         finally:
+            # Process next queued message, or release busy
+            next_text = None
             with state.lock:
-                state.busy = False
+                if state.message_queue:
+                    next_text = state.message_queue.popleft()
+                else:
+                    state.busy = False
+            if next_text:
+                log.info("Processing queued message: %s", next_text[:80])
+                _run_message(next_text)
 
     threading.Thread(target=_run, daemon=True).start()
 

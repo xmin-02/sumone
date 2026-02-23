@@ -1,4 +1,5 @@
 """Global bot state."""
+import collections
 import threading
 from config import _config
 
@@ -15,6 +16,7 @@ class State:
     last_cost = 0.0
     global_tokens = 0
     waiting_token_input = False
+    message_queue = collections.deque()
     lock = threading.Lock()
 
 state = State()
