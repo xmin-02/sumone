@@ -176,17 +176,20 @@ def handle_total_tokens_callback(callback_id, msg_id, data):
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         return
     if action == "aggregate":
-        reset_auto_dismiss(msg_id)
+        cancel_auto_dismiss(msg_id)
+        tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": t("total_tokens.aggregating")})
         threading.Thread(target=_handle_aggregate, daemon=True).start()
         return
     if action == "connect":
         cancel_auto_dismiss(msg_id)
+        tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         _handle_connect()
         return
     if action == "manage":
         cancel_auto_dismiss(msg_id)
+        tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         _handle_manage()
         return
