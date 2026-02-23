@@ -9,7 +9,7 @@ from i18n import t
 import config
 from config import BOT_TOKEN, CHAT_ID, log
 from state import state
-from telegram import escape_html, send_html, tg_api, tg_api_raw
+from telegram import escape_html, send_html, tg_api, tg_api_raw, delete_msg, schedule_auto_dismiss, reset_auto_dismiss, cancel_auto_dismiss
 from tokens import publish_token_data, compute_all_period_tokens, fetch_remote_tokens, get_remote_bot_info
 
 
@@ -37,12 +37,14 @@ def handle_total_tokens(text):
          {"text": t("total_tokens.btn_manage"), "callback_data": "tt:manage"}],
         [{"text": t("total_tokens.btn_close"), "callback_data": "tt:close"}],
     ]
-    tg_api("sendMessage", {
+    result = tg_api("sendMessage", {
         "chat_id": CHAT_ID,
         "text": msg,
         "parse_mode": "HTML",
         "reply_markup": json.dumps({"inline_keyboard": buttons}),
     })
+    if result and result.get("ok"):
+        schedule_auto_dismiss(result["result"]["message_id"])
 
 
 def _handle_aggregate():
@@ -91,15 +93,23 @@ def _handle_aggregate():
 
 def _handle_connect():
     state.waiting_token_input = True
-    send_html(
+    prompt_id = send_html(
         f"<b>{t('total_tokens.connect_title')}</b>\n{'━'*25}\n"
         f"{t('total_tokens.connect_prompt')}\n\n"
         f"<i>{t('total_tokens.connect_cancel')}</i>")
+    state.connect_prompt_msg_id = prompt_id
 
 
-def handle_token_input(text):
+def handle_token_input(text, user_msg_id=None):
     """Process bot token input for remote PC connection. Called from main."""
     state.waiting_token_input = False
+    # Delete user's message containing the token for security
+    if user_msg_id:
+        delete_msg(user_msg_id)
+    # Delete the connect prompt message
+    if state.connect_prompt_msg_id:
+        delete_msg(state.connect_prompt_msg_id)
+        state.connect_prompt_msg_id = None
     token = text.strip()
     if not re.match(r'^\d+:[A-Za-z0-9_-]+$', token):
         send_html(f"<b>{t('error.invalid_token')}</b>")
@@ -138,12 +148,14 @@ def _handle_manage():
         lines.append(f"  <b>{i+1}.</b> @{escape_html(name)}")
         buttons.append([{"text": f"{i+1}. @{name} {t('total_tokens.delete_label')}", "callback_data": f"tt:del:{i}"}])
     buttons.append([{"text": t("total_tokens.btn_close"), "callback_data": "tt:close"}])
-    tg_api("sendMessage", {
+    result = tg_api("sendMessage", {
         "chat_id": CHAT_ID,
         "text": "\n".join(lines),
         "parse_mode": "HTML",
         "reply_markup": json.dumps({"inline_keyboard": buttons}),
     })
+    if result and result.get("ok"):
+        schedule_auto_dismiss(result["result"]["message_id"])
 
 
 def _handle_delete_remote(index):
@@ -159,23 +171,28 @@ def _handle_delete_remote(index):
 def handle_total_tokens_callback(callback_id, msg_id, data):
     action = data.split(":", 1)[1] if ":" in data else ""
     if action == "close":
+        cancel_auto_dismiss(msg_id)
         tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         return
     if action == "aggregate":
+        reset_auto_dismiss(msg_id)
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": t("total_tokens.aggregating")})
         threading.Thread(target=_handle_aggregate, daemon=True).start()
         return
     if action == "connect":
+        cancel_auto_dismiss(msg_id)
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         _handle_connect()
         return
     if action == "manage":
+        cancel_auto_dismiss(msg_id)
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         _handle_manage()
         return
     if action.startswith("del:"):
         try:
+            cancel_auto_dismiss(msg_id)
             index = int(action.split(":")[1])
             result_text = _handle_delete_remote(index)
             tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": result_text})

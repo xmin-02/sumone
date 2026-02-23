@@ -16,6 +16,7 @@ class State:
     last_cost = 0.0
     global_tokens = 0
     waiting_token_input = False
+    connect_prompt_msg_id = None
     message_queue = collections.deque()
     lock = threading.Lock()
 
