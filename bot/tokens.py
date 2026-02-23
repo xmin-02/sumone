@@ -15,7 +15,13 @@ PUBLISH_LANG = "zu"
 PUBLISH_INTERVAL = 300
 
 
-def scan_jsonl_tokens(fpath):
+def scan_jsonl_tokens(fpath, seen=None):
+    """Count tokens from assistant events with deduplication.
+
+    Parent session files embed subagent events, causing the same
+    messageId:requestId to appear in multiple files. Pass a shared
+    ``seen`` set across calls to avoid double-counting.
+    """
     total = 0
     try:
         with open(fpath, encoding="utf-8", errors="replace") as f:
@@ -28,6 +34,14 @@ def scan_jsonl_tokens(fpath):
                     continue
                 if e.get("type") != "assistant":
                     continue
+                if seen is not None:
+                    msg_id = e.get("message", {}).get("id")
+                    req_id = e.get("requestId")
+                    if msg_id and req_id:
+                        h = f"{msg_id}:{req_id}"
+                        if h in seen:
+                            continue
+                        seen.add(h)
                 u = e.get("message", {}).get("usage", {})
                 total += u.get("input_tokens", 0) + u.get("output_tokens", 0) + \
                          u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0)
@@ -41,21 +55,23 @@ def get_tokens(period):
         sid = state.session_id
         if not sid:
             return 0
+        seen = set()
         for proj in find_project_dirs():
             fp = os.path.join(proj, f"{sid}.jsonl")
             if os.path.exists(fp):
-                return scan_jsonl_tokens(fp)
+                return scan_jsonl_tokens(fp, seen)
         return 0
     cache_key = f"{period}:{time.strftime('%Y-%m-%d')}"
     cached = _token_cache.get(cache_key)
     if cached and time.time() - cached[1] < 60:
         return cached[0]
     total = 0
+    seen = set()
     today = time.strftime("%Y-%m-%d")
     month = time.strftime("%Y-%m")
     year = time.strftime("%Y")
     for proj in find_project_dirs():
-        for fp in glob.glob(os.path.join(proj, "*.jsonl")):
+        for fp in glob.glob(os.path.join(proj, "**", "*.jsonl"), recursive=True):
             try:
                 mt = time.localtime(os.path.getmtime(fp))
                 if period == "day" and time.strftime("%Y-%m-%d", mt) != today:
@@ -64,7 +80,7 @@ def get_tokens(period):
                     continue
                 if period == "year" and time.strftime("%Y", mt) != year:
                     continue
-                total += scan_jsonl_tokens(fp)
+                total += scan_jsonl_tokens(fp, seen)
             except Exception:
                 continue
     _token_cache[cache_key] = (total, time.time())
@@ -97,11 +113,12 @@ def compute_all_period_tokens():
     year = time.strftime("%Y")
     period_totals = {"d": 0, "m": 0, "y": 0, "t": 0}
     session_count = 0
+    seen = set()
     for proj in find_project_dirs():
-        for fp in glob.glob(os.path.join(proj, "*.jsonl")):
+        for fp in glob.glob(os.path.join(proj, "**", "*.jsonl"), recursive=True):
             try:
                 mt = time.localtime(os.path.getmtime(fp))
-                tokens = scan_jsonl_tokens(fp)
+                tokens = scan_jsonl_tokens(fp, seen)
                 if tokens > 0:
                     session_count += 1
                     period_totals["t"] += tokens

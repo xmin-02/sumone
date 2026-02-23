@@ -217,6 +217,57 @@ if data.get('ok'): print('ok')
     Remove-Item $photoPath -ErrorAction SilentlyContinue
 }
 
+# --- Grant read access to other users' Claude sessions ---
+function Setup-TokenAccess {
+    $currentUser = $env:USERNAME
+    $found = @()
+
+    # Scan C:\Users\* for .claude\projects (APPDATA path)
+    foreach ($userDir in Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue) {
+        if ($userDir.Name -eq $currentUser) { continue }
+        $appData = Join-Path $userDir.FullName "AppData\Roaming\claude\projects"
+        if (-not (Test-Path $appData -PathType Container)) { continue }
+        # Already readable?
+        try { $null = Get-ChildItem $appData -ErrorAction Stop; continue } catch {}
+        $found += $appData
+    }
+
+    if ($found.Count -eq 0) { return }
+
+    Write-Host ""
+    Write-Info "Found Claude sessions from other users:"
+    foreach ($d in $found) { Write-Host "  $d" }
+    Write-Host ""
+
+    $yn = Read-Host "Include other users' tokens in aggregate? (Y/n)"
+    if ($yn -match '^[nN]') { return }
+
+    foreach ($appData in $found) {
+        Write-Info "Granting read access: $appData"
+        try {
+            $acl = Get-Acl $appData
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                $currentUser, "ReadAndExecute", "ContainerInherit,ObjectInherit", "None", "Allow")
+            $acl.AddAccessRule($rule)
+            Set-Acl -Path $appData -AclObject $acl
+
+            # Parent dirs need traverse
+            foreach ($parent in @((Split-Path $appData), (Split-Path (Split-Path $appData)))) {
+                try {
+                    $pacl = Get-Acl $parent
+                    $prule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                        $currentUser, "ReadAndExecute", "None", "None", "Allow")
+                    $pacl.AddAccessRule($prule)
+                    Set-Acl -Path $parent -AclObject $pacl
+                } catch {}
+            }
+            Write-Ok "Access granted: $appData"
+        } catch {
+            Write-Warn "Failed: $appData ($_)"
+        }
+    }
+}
+
 # --- Auto-start ---
 function Setup-AutoStart {
     Write-Info "Registering Windows Task Scheduler..."
@@ -275,6 +326,7 @@ function Main {
     Install-Bot
     Test-BotToken
     Set-BotPhoto
+    Setup-TokenAccess
     Setup-AutoStart
     Show-UninstallInfo
 

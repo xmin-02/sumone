@@ -8,18 +8,54 @@ from config import IS_WINDOWS, log
 from state import state
 
 
+def _discover_claude_roots():
+    """Auto-discover all .claude/projects directories on the system."""
+    roots = []
+    # Current user
+    own = os.path.expanduser("~/.claude/projects")
+    if os.path.isdir(own):
+        roots.append(own)
+    # Other users: /home/* and /root
+    candidates = []
+    try:
+        candidates = [os.path.join("/home", d) for d in os.listdir("/home")]
+    except Exception:
+        pass
+    candidates.append("/root")
+    for home in candidates:
+        cp = os.path.join(home, ".claude", "projects")
+        if cp == own or not os.path.isdir(cp):
+            continue
+        try:
+            os.listdir(cp)
+            roots.append(cp)
+        except PermissionError:
+            continue
+    return roots
+
+
 def find_project_dirs():
     if IS_WINDOWS:
         claude_proj = os.path.join(os.environ.get("APPDATA", ""), "claude", "projects")
         if not os.path.isdir(claude_proj):
             claude_proj = os.path.expanduser("~/.claude/projects")
-    else:
-        claude_proj = os.path.expanduser("~/.claude/projects")
-    if not os.path.isdir(claude_proj): return []
+        if not os.path.isdir(claude_proj): return []
+        dirs = []
+        for name in os.listdir(claude_proj):
+            full = os.path.join(claude_proj, name)
+            if os.path.isdir(full): dirs.append(full)
+        return dirs
     dirs = []
-    for name in os.listdir(claude_proj):
-        full = os.path.join(claude_proj, name)
-        if os.path.isdir(full): dirs.append(full)
+    seen = set()
+    for root in _discover_claude_roots():
+        try:
+            for name in os.listdir(root):
+                full = os.path.join(root, name)
+                if os.path.isdir(full) and full not in seen:
+                    seen.add(full)
+                    dirs.append(full)
+        except Exception:
+            continue
     return dirs
 
 
