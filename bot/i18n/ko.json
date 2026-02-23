@@ -87,6 +87,7 @@
     "cancel_hint": "/cancel 로 취소"
   },
   "busy": "Claude가 처리 중입니다. /cancel 로 취소할 수 있습니다.",
+  "bot_duplicate": "중복 실행 감지: 기존 봇 프로세스 {count}개를 종료하고 새로 시작합니다.",
   "bot_started": "Claude Code Bot 시작됨\n/help 로 명령어를 확인하세요.",
   "file_prompt": {
     "analyze_image": "이 이미지 파일을 분석해줘",

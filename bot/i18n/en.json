@@ -87,6 +87,7 @@
     "cancel_hint": "/cancel to stop"
   },
   "busy": "Claude is processing. Use /cancel to stop.",
+  "bot_duplicate": "Duplicate detected: terminated {count} existing bot process(es) and restarting.",
   "bot_started": "Claude Code Bot started\nSend /help to see available commands.",
   "file_prompt": {
     "analyze_image": "Analyze this image file",

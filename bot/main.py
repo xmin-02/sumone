@@ -240,9 +240,78 @@ def _sync_bot_commands():
 # Polling loop
 # ---------------------------------------------------------------------------
 
+def _kill_duplicate_bots():
+    """Find and kill other bot processes (same script), return count killed."""
+    my_pid = os.getpid()
+    killed = 0
+    bot_scripts = {"main.py", "telegram-bot-ko.py", "telegram-bot-en.py", "telegram-bot.py"}
+    try:
+        if IS_WINDOWS:
+            import subprocess as _sp
+            out = _sp.check_output(
+                ["wmic", "process", "where",
+                 "Name like '%python%'",
+                 "get", "ProcessId,CommandLine", "/FORMAT:CSV"],
+                creationflags=_sp.CREATE_NO_WINDOW,
+                timeout=10,
+            ).decode("utf-8", errors="replace")
+            for line in out.strip().splitlines():
+                parts = line.strip().split(",", 2)
+                if len(parts) < 3:
+                    continue
+                cmdline = parts[1]
+                try:
+                    pid = int(parts[2])
+                except (ValueError, IndexError):
+                    continue
+                if pid == my_pid:
+                    continue
+                if any(s in cmdline for s in bot_scripts):
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                        killed += 1
+                        log.info("Killed duplicate bot process: PID %d", pid)
+                    except OSError:
+                        pass
+        else:
+            import subprocess as _sp
+            out = _sp.check_output(
+                ["ps", "-eo", "pid,args"],
+                timeout=10,
+            ).decode("utf-8", errors="replace")
+            for line in out.strip().splitlines()[1:]:
+                line = line.strip()
+                if not line:
+                    continue
+                tok = line.split(None, 1)
+                if len(tok) < 2:
+                    continue
+                try:
+                    pid = int(tok[0])
+                except ValueError:
+                    continue
+                cmdline = tok[1]
+                if pid == my_pid:
+                    continue
+                if "python" in cmdline.lower() and any(s in cmdline for s in bot_scripts):
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                        killed += 1
+                        log.info("Killed duplicate bot process: PID %d", pid)
+                    except OSError:
+                        pass
+    except Exception as e:
+        log.warning("Duplicate bot check failed: %s", e)
+    return killed
+
+
 def poll_loop():
     offset = 0
     log.info("Bot started.")
+
+    # Kill duplicate bot processes before anything else
+    killed = _kill_duplicate_bots()
+
     _sync_bot_commands()
 
     # Token data publishing thread
@@ -261,6 +330,8 @@ def poll_loop():
     state.global_tokens = get_monthly_tokens()
     log.info("Monthly tokens loaded: %d", state.global_tokens)
 
+    if killed > 0:
+        send_html(f"<b>{i18n.t('bot_duplicate', count=killed)}</b>")
     send_html(f"<b>{i18n.t('bot_started')}</b>")
 
     while True:
