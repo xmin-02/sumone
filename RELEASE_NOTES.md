@@ -64,20 +64,20 @@
 ### Module Structure
 ```
 bot/
-├── main.py              # Entry point, polling, routing (317 lines)
-├── config.py            # Configuration loader (64 lines)
-├── state.py             # Global state (22 lines)
-├── telegram.py          # TG API helpers (138 lines)
-├── claude.py            # CLI integration (203 lines)
-├── tokens.py            # Token tracking (192 lines)
-├── sessions.py          # Session management (89 lines)
-├── downloader.py        # File download (51 lines)
+├── main.py              # Entry point, polling, routing
+├── config.py            # Configuration loader
+├── state.py             # Global state
+├── telegram.py          # TG API helpers
+├── claude.py            # CLI integration
+├── tokens.py            # Token tracking
+├── sessions.py          # Session management
+├── downloader.py        # File download
 ├── i18n/                # Language packs
-│   ├── __init__.py      # t() function (26 lines)
+│   ├── __init__.py      # t() function
 │   ├── ko.json          # Korean (177 keys)
 │   └── en.json          # English (177 keys)
 └── commands/            # Plugin modules
-    ├── __init__.py      # Registry (36 lines)
+    ├── __init__.py      # Registry
     ├── basic.py         # /help, /status, /cost, /model, /cancel
     ├── filesystem.py    # /pwd, /cd, /ls
     ├── settings.py      # /settings
