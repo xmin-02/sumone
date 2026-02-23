@@ -146,6 +146,51 @@ else: exit(1)
     fi
 }
 
+# --- Set Bot Profile Photo ---
+set_bot_photo() {
+    info "Setting bot profile photo..."
+    local photo_url="${GITHUB_RAW}/assets/logo.png"
+    local photo_path="$INSTALL_DIR/logo.png"
+
+    # Download logo
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$photo_url" -o "$photo_path" 2>/dev/null
+    elif command -v wget &>/dev/null; then
+        wget -q "$photo_url" -O "$photo_path" 2>/dev/null
+    else
+        $PYTHON -c "import urllib.request; urllib.request.urlretrieve('$photo_url', '$photo_path')" 2>/dev/null
+    fi
+
+    if [[ ! -f "$photo_path" ]]; then
+        warn "Logo download failed, skipping profile photo"
+        return
+    fi
+
+    # Upload via setMyProfilePhoto API
+    $PYTHON -c "
+import urllib.request, json, uuid
+token = '${BOT_TOKEN}'
+boundary = uuid.uuid4().hex
+with open('${photo_path}', 'rb') as f:
+    photo_data = f.read()
+photo_json = json.dumps({'type': 'static', 'photo': 'attach://photo_file'})
+parts = []
+parts.append(('--' + boundary + '\r\nContent-Disposition: form-data; name=\"photo\"\r\n\r\n' + photo_json + '\r\n').encode())
+parts.append(('--' + boundary + '\r\nContent-Disposition: form-data; name=\"photo_file\"; filename=\"logo.png\"\r\nContent-Type: image/png\r\n\r\n').encode() + photo_data + b'\r\n')
+parts.append(('--' + boundary + '--\r\n').encode())
+body = b''.join(parts)
+req = urllib.request.Request('https://api.telegram.org/bot' + token + '/setMyProfilePhoto', data=body)
+req.add_header('Content-Type', 'multipart/form-data; boundary=' + boundary)
+try:
+    resp = urllib.request.urlopen(req, timeout=30)
+    data = json.loads(resp.read())
+    if data.get('ok'): print('ok')
+except Exception: pass
+" 2>/dev/null && ok "Profile photo set" || warn "Profile photo upload failed (non-critical)"
+
+    rm -f "$photo_path"
+}
+
 # --- Auto-start ---
 setup_autostart_linux() {
     info "Registering systemd service..."
@@ -251,6 +296,7 @@ main() {
     get_user_input
     install_bot
     verify_token
+    set_bot_photo
 
     case "$OS" in
         linux) setup_autostart_linux ;;
