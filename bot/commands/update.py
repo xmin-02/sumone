@@ -1,4 +1,5 @@
 """Update command: /update_bot with profile photo and patch notes."""
+import base64
 import hashlib
 import json
 import os
@@ -55,8 +56,16 @@ def _update_profile_photo():
     return False
 
 
+def _git_blob_sha1(filepath):
+    """Compute git blob SHA1 for a local file (same algorithm as git)."""
+    with open(filepath, "rb") as f:
+        data = f.read()
+    header = f"blob {len(data)}\0".encode()
+    return hashlib.sha1(header + data).hexdigest()
+
+
 def _fetch_bot_file_list():
-    """Fetch list of all files under bot/ from GitHub tree API."""
+    """Fetch list of all files under bot/ with git SHAs from GitHub tree API."""
     api_url = f"https://api.github.com/repos/{GITHUB_REPO}/git/trees/main?recursive=1"
     req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github.v3+json"})
     resp = urllib.request.urlopen(req, timeout=15)
@@ -65,39 +74,45 @@ def _fetch_bot_file_list():
     for item in tree.get("tree", []):
         if item["type"] == "blob" and item["path"].startswith("bot/"):
             rel_path = item["path"][4:]  # strip "bot/" prefix
-            files.append(rel_path)
+            files.append((rel_path, item["sha"]))
     return files
 
 
+def _download_via_api(rel_path):
+    """Download file content using GitHub Contents API (no CDN cache)."""
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/bot/{rel_path}?ref=main"
+    req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github.v3+json"})
+    resp = urllib.request.urlopen(req, timeout=15)
+    data = json.loads(resp.read().decode())
+    return base64.b64decode(data["content"])
+
+
 def _update_all_files(bot_dir):
-    """Download all bot files from GitHub, return (updated, added) lists."""
+    """Download changed bot files via GitHub API, return (updated, added) lists."""
     files = _fetch_bot_file_list()
     updated = []
     added = []
-    for rel_path in files:
+    for rel_path, remote_sha in files:
         local_path = os.path.join(bot_dir, rel_path)
-        raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/bot/{rel_path}"
-        tmp_path = local_path + ".new"
+        is_existing = os.path.exists(local_path)
+        # Compare git blob SHA — skip download if unchanged
+        if is_existing:
+            try:
+                if _git_blob_sha1(local_path) == remote_sha:
+                    continue
+            except Exception:
+                pass
         try:
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            urllib.request.urlretrieve(raw_url, tmp_path)
-            if os.path.exists(local_path):
-                with open(local_path, "rb") as f:
-                    old_hash = hashlib.sha256(f.read()).hexdigest()
-                with open(tmp_path, "rb") as f:
-                    new_hash = hashlib.sha256(f.read()).hexdigest()
-                if old_hash == new_hash:
-                    os.remove(tmp_path)
-                    continue
-                os.replace(tmp_path, local_path)
+            content = _download_via_api(rel_path)
+            with open(local_path, "wb") as f:
+                f.write(content)
+            if is_existing:
                 updated.append(rel_path)
             else:
-                os.replace(tmp_path, local_path)
                 added.append(rel_path)
         except Exception as e:
             log.warning("Failed to update %s: %s", rel_path, e)
-            try: os.remove(tmp_path)
-            except Exception: pass
     return updated, added
 
 
