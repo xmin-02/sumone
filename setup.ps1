@@ -147,6 +147,47 @@ function Test-BotToken {
     } catch { Write-Warn "Token verification failed: $_" }
 }
 
+# --- Set Bot Profile Photo ---
+function Set-BotPhoto {
+    Write-Info "Setting bot profile photo..."
+    $photoUrl = "$GITHUB_RAW/assets/logo.png"
+    $photoPath = Join-Path $script:INSTALL_DIR "logo.png"
+
+    try {
+        Invoke-WebRequest -Uri $photoUrl -OutFile $photoPath -ErrorAction Stop
+    } catch {
+        Write-Warn "Logo download failed, skipping profile photo"
+        return
+    }
+
+    try {
+        & $script:PYTHON -c @"
+import urllib.request, json, uuid
+token = '$($script:BOT_TOKEN)'
+photo_path = r'$photoPath'
+boundary = uuid.uuid4().hex
+with open(photo_path, 'rb') as f:
+    photo_data = f.read()
+photo_json = json.dumps({'type': 'static', 'photo': 'attach://photo_file'})
+parts = []
+parts.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="photo"\r\n\r\n' + photo_json + '\r\n').encode())
+parts.append(('--' + boundary + '\r\nContent-Disposition: form-data; name="photo_file"; filename="logo.png"\r\nContent-Type: image/png\r\n\r\n').encode() + photo_data + b'\r\n')
+parts.append(('--' + boundary + '--\r\n').encode())
+body = b''.join(parts)
+req = urllib.request.Request('https://api.telegram.org/bot' + token + '/setMyProfilePhoto', data=body)
+req.add_header('Content-Type', 'multipart/form-data; boundary=' + boundary)
+resp = urllib.request.urlopen(req, timeout=30)
+data = json.loads(resp.read())
+if data.get('ok'): print('ok')
+"@
+        Write-Ok "Profile photo set"
+    } catch {
+        Write-Warn "Profile photo upload failed (non-critical)"
+    }
+
+    Remove-Item $photoPath -ErrorAction SilentlyContinue
+}
+
 # --- Auto-start ---
 function Setup-AutoStart {
     Write-Info "Registering Windows Task Scheduler..."
@@ -204,6 +245,7 @@ function Main {
     Get-UserInput
     Install-Bot
     Test-BotToken
+    Set-BotPhoto
     Setup-AutoStart
     Show-UninstallInfo
 
