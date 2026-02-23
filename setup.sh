@@ -222,6 +222,54 @@ except Exception: pass
     rm -f "$photo_path"
 }
 
+# --- Grant read access to other users' Claude sessions ---
+setup_token_access() {
+    local bot_user
+    bot_user="$(whoami)"
+    local found=()
+
+    # Scan /home/* and /root for .claude/projects
+    for home_dir in /home/* /root; do
+        [[ -d "$home_dir/.claude/projects" ]] || continue
+        # Skip own directory
+        [[ "$home_dir" == "$HOME" ]] && continue
+        # Already readable?
+        if ls "$home_dir/.claude/projects" &>/dev/null 2>&1; then
+            continue
+        fi
+        found+=("$home_dir")
+    done
+
+    [[ ${#found[@]} -eq 0 ]] && return
+
+    echo ""
+    info "Found Claude sessions from other users:"
+    for d in "${found[@]}"; do
+        echo "  $d/.claude/projects/"
+    done
+    echo ""
+
+    if [[ "$LANG" == "ko" ]]; then
+        read -rp "$(echo -e "${CYAN}다른 사용자의 토큰도 집계할까요? (Y/n): ${NC}")" yn
+    else
+        read -rp "$(echo -e "${CYAN}Include other users' tokens in aggregate? (Y/n): ${NC}")" yn
+    fi
+    [[ "$yn" =~ ^[nN] ]] && return
+
+    for home_dir in "${found[@]}"; do
+        info "Granting read access: $home_dir/.claude/projects/"
+        sudo setfacl -m "u:${bot_user}:rX" "$home_dir" 2>/dev/null
+        sudo setfacl -m "u:${bot_user}:rX" "$home_dir/.claude" 2>/dev/null
+        sudo setfacl -R -m "u:${bot_user}:rX" "$home_dir/.claude/projects/" 2>/dev/null
+        sudo setfacl -R -d -m "u:${bot_user}:rX" "$home_dir/.claude/projects/" 2>/dev/null
+        if ls "$home_dir/.claude/projects" &>/dev/null 2>&1; then
+            ok "Access granted: $home_dir"
+        else
+            warn "Failed: $home_dir (setfacl may not be supported)"
+        fi
+    done
+}
+
 # --- Auto-start ---
 setup_autostart_linux() {
     info "Registering systemd service..."
@@ -328,6 +376,7 @@ main() {
     install_bot
     verify_token
     set_bot_photo
+    setup_token_access
 
     case "$OS" in
         linux) setup_autostart_linux ;;
