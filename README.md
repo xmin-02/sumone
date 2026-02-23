@@ -21,12 +21,17 @@ A Telegram bot that bridges your phone to a running Claude Code CLI session. Sen
 - **File & image analysis** — Attach photos or documents, Claude analyzes them automatically
 - **Real-time status** — See what Claude is doing (reading files, running commands, searching code...)
 - **Global cost tracking** — Per-request, bot-session, and total usage across all Claude sessions (input/output tokens, cost)
+- **Multi-PC token aggregation** — `/total_tokens` aggregates token usage across multiple PCs via bot description channel
 - **Interactive questions** — When Claude asks a question, pick an option by number
+- **Message queue** — Messages sent while Claude is busy are queued and processed automatically in order
 - **Self-updating** — `/update_bot` checks GitHub for updates and applies them automatically
+- **Duplicate process guard** — Automatically detects and kills duplicate bot instances on startup
 - **Slash commands** — Use Claude Code slash commands (`/compact`, `/review`, etc.) directly from Telegram
+- **OMC skill support** — `/autopilot`, `/ralph`, `/team`, and all oh-my-claudecode skills
+- **Settings UI** — `/settings` with inline keyboard for toggling cost display, status messages, token range
 - **Auto-start on boot** — systemd (Linux), launchd (macOS), Task Scheduler (Windows), .bashrc (WSL)
 - **Zero dependencies** — Pure Python, no pip packages required
-- **Bilingual** — Korean and English versions available
+- **i18n** — Single codebase with JSON language packs (Korean / English)
 
 ## Prerequisites
 
@@ -58,7 +63,7 @@ The setup script will:
 1. Check prerequisites (Python, Claude CLI)
 2. Ask for language (Korean / English)
 3. Ask for Bot Token, Chat ID, and working directory
-4. Download the bot from GitHub
+4. Download all bot modules from GitHub
 5. Save settings to `config.json` (token and secrets stay local, never uploaded)
 6. Register auto-start service for your OS
 7. Start the bot immediately
@@ -70,15 +75,21 @@ Once running, open Telegram and send `/help` to your bot.
 ```
 GitHub Repository                    Your Machine
 ┌─────────────────┐                  ┌──────────────────────────────┐
-│ bot/            │   setup.sh/ps1   │ ~/.claude-telegram-bot/      │
-│ telegram-bot-   │ ───download────  │  telegram-bot.py  (bot code) │
-│ ko.py / en.py   │                  │  config.json      (secrets)  │
-│                 │   /update_bot    │  bot.log          (runtime)  │
-│ setup.sh        │ ─────check─────  │  downloads/       (files)    │
-│ setup.ps1       │                  └──────────┬───────────────────┘
-└─────────────────┘                             │
-                                                ▼
-                                    claude CLI (subprocess)
+│ bot/             │   setup.sh/ps1  │ ~/.claude-telegram-bot/      │
+│   main.py        │ ───download──── │   main.py         (entry)    │
+│   config.py      │                 │   config.py       (settings) │
+│   state.py       │   /update_bot   │   telegram.py     (TG API)   │
+│   telegram.py    │ ─────check───── │   claude.py       (CLI)      │
+│   claude.py      │                 │   tokens.py       (tracking) │
+│   tokens.py      │                 │   sessions.py     (sessions) │
+│   sessions.py    │                 │   i18n/           (lang packs)│
+│   downloader.py  │                 │   commands/       (plugins)  │
+│   i18n/          │                 │   config.json     (secrets)  │
+│   commands/      │                 │   bot.log         (runtime)  │
+│                  │                 └──────────┬───────────────────┘
+│ setup.sh         │                            │
+│ setup.ps1        │                            ▼
+└─────────────────┘                 claude CLI (subprocess)
                                                 │
                                                 ▼
                                     Claude Code → files, commands, etc.
@@ -90,6 +101,7 @@ GitHub Repository                    Your Machine
 - **Bot code** lives on GitHub — no secrets embedded
 - **config.json** stays on your machine — contains token, chat ID, language
 - `/update_bot` downloads the latest code from GitHub while preserving your config
+- **Modular design** — commands are plugins with decorator-based auto-registration
 
 ## Commands
 
@@ -104,8 +116,14 @@ GitHub Repository                    Your Machine
 | `/cost` | Show cost info (per-request + bot session + global usage with token counts) |
 | `/status` | Show bot status (session, model, state) |
 | `/cancel` | Cancel currently running Claude process |
+| `/settings` | Bot settings with inline keyboard (cost display, status messages, token range) |
+| `/total_tokens` | Aggregate token usage across multiple PCs |
+| `/pwd` | Show current working directory |
+| `/cd [path]` | Change working directory |
+| `/ls [path]` | List files and folders |
 | `/update_bot` | Check GitHub for updates and auto-apply |
 | `/builtin` | List CLI built-in commands |
+| `/skills` | List OMC skills |
 
 ### Passthrough Commands
 
@@ -117,6 +135,9 @@ These are forwarded directly to Claude Code CLI:
 | `/init` | Initialize project |
 | `/review` | Code review |
 | `/security-review` | Security review |
+| `/autopilot` | OMC autonomous execution |
+| `/ralph` | OMC repeat until complete |
+| `/team` | OMC multi-agent collaboration |
 
 ## Usage Examples
 
@@ -137,6 +158,12 @@ Analyze the mutation.go file
 # Check total token usage across all sessions
 /cost
 
+# Aggregate tokens across multiple PCs
+/total_tokens
+
+# Toggle settings (cost display, status messages)
+/settings
+
 # Update bot to latest version
 /update_bot
 
@@ -148,10 +175,30 @@ Analyze the mutation.go file
 
 ```
 ~/.claude-telegram-bot/
-├── telegram-bot.py     # Bot script (downloaded from GitHub)
-├── config.json         # Your settings (token, chat ID, language) — chmod 600
-├── bot.log             # Runtime log
-└── downloads/          # Downloaded files from Telegram
+├── main.py              # Entry point
+├── config.py            # Configuration loader
+├── state.py             # Global state
+├── telegram.py          # Telegram API helpers
+├── claude.py            # Claude CLI integration
+├── tokens.py            # Token tracking
+├── sessions.py          # Session management
+├── downloader.py        # File download handler
+├── i18n/
+│   ├── __init__.py      # i18n loader & t() function
+│   ├── ko.json          # Korean language pack
+│   └── en.json          # English language pack
+├── commands/
+│   ├── __init__.py      # Command registry (@command, @callback)
+│   ├── basic.py         # /help, /status, /cost, /model, /cancel
+│   ├── filesystem.py    # /pwd, /cd, /ls
+│   ├── settings.py      # /settings (inline keyboard)
+│   ├── update.py        # /update_bot
+│   ├── total_tokens.py  # /total_tokens (multi-PC)
+│   ├── skills.py        # /builtin, /skills
+│   └── session_cmd.py   # /session, /clear, selection, answers
+├── config.json          # Your settings (secrets — chmod 600)
+├── bot.log              # Runtime log
+└── downloads/           # Downloaded files from Telegram
 ```
 
 `config.json` example:
@@ -163,6 +210,25 @@ Analyze the mutation.go file
     "lang": "ko",
     "github_repo": "xmin-02/Claude-telegram-bot"
 }
+```
+
+### Adding a New Command
+
+Create a file in `commands/` and use the `@command` decorator:
+
+```python
+# commands/my_command.py
+from commands import command
+from telegram import send_html
+
+@command("/mycommand", aliases=["/mc"])
+def handle_mycommand(text):
+    send_html("<b>Hello from my command!</b>")
+```
+
+Then import it in `main.py`:
+```python
+import commands.my_command  # noqa: F401
 ```
 
 ### Service Management
@@ -190,9 +256,19 @@ Start-ScheduledTask -TaskName ClaudeTelegramBot
 
 **WSL:**
 ```bash
-pgrep -f telegram-bot.py                  # Check if running
-pkill -f telegram-bot.py                  # Stop
+pgrep -f main.py                           # Check if running
+pkill -f main.py                           # Stop
 ```
+
+## Upgrading from v1
+
+If you're running the old single-file bot (`telegram-bot-ko.py` / `telegram-bot-en.py`), simply run `/update_bot` in Telegram. The bot will automatically:
+
+1. Download the migration script from GitHub
+2. Download all v2 modular files
+3. Restart with the new `main.py` entry point
+
+No manual steps needed. Your `config.json` is preserved.
 
 ## Uninstall
 
@@ -235,18 +311,40 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.claude-telegram-bot"
 | Token verification failed | Re-check token with [@BotFather](https://t.me/BotFather) |
 | Permission denied | Run `chmod +x setup.sh` |
 | Windows: "scripts disabled" | Run with `-ExecutionPolicy Bypass` flag |
-| Update failed | Check network, then try manual: `curl -o ~/.claude-telegram-bot/telegram-bot.py https://raw.githubusercontent.com/xmin-02/Claude-telegram-bot/main/bot/telegram-bot-ko.py` |
+| Duplicate bot instances | Bot auto-kills duplicates on startup; or manually: `pkill -f main.py` |
 
 ## Repository Structure
 
 ```
-├── README.md            # This file
-├── LICENSE              # MIT License
-├── setup.sh             # Setup script for Linux / macOS / WSL
-├── setup.ps1            # Setup script for Windows
+├── README.md
+├── RELEASE_NOTES.md
+├── LICENSE
+├── setup.sh                    # Setup script for Linux / macOS / WSL
+├── setup.ps1                   # Setup script for Windows
 └── bot/
-    ├── telegram-bot-ko.py   # Bot code (Korean)
-    └── telegram-bot-en.py   # Bot code (English)
+    ├── main.py                 # Entry point (polling, routing, message handler)
+    ├── config.py               # Configuration loader & updater
+    ├── state.py                # Global state singleton
+    ├── telegram.py             # Telegram Bot API helpers
+    ├── claude.py               # Claude CLI subprocess integration
+    ├── tokens.py               # Token tracking & multi-PC aggregation
+    ├── sessions.py             # Session listing & management
+    ├── downloader.py           # Telegram file download & prompt building
+    ├── telegram-bot-ko.py      # v1→v2 migration script (Korean)
+    ├── telegram-bot-en.py      # v1→v2 migration script (English)
+    ├── i18n/
+    │   ├── __init__.py         # Language loader & t() function
+    │   ├── ko.json             # Korean strings (177 keys)
+    │   └── en.json             # English strings (177 keys)
+    └── commands/
+        ├── __init__.py         # Command registry (@command, @callback decorators)
+        ├── basic.py            # /help, /status, /cost, /model, /cancel
+        ├── filesystem.py       # /pwd, /cd, /ls
+        ├── settings.py         # /settings (inline keyboard UI)
+        ├── update.py           # /update_bot, profile photo sync
+        ├── total_tokens.py     # /total_tokens, remote PC management
+        ├── skills.py           # /builtin, /skills listings
+        └── session_cmd.py      # /session, /clear, selection, answer handling
 ```
 
 ## License
@@ -272,12 +370,17 @@ MIT License. See [LICENSE](LICENSE) for details.
 - **파일 & 이미지 분석** — 사진이나 문서를 첨부하면 Claude가 자동으로 분석
 - **실시간 상태 표시** — Claude가 뭘 하고 있는지 표시 (파일 읽기, 명령 실행, 코드 검색 등)
 - **전체 비용 추적** — 요청별 / 봇 세션 / 전체 세션 누적 비용 및 토큰 사용량 표시
+- **다중 PC 토큰 집계** — `/total_tokens`로 여러 PC의 토큰 사용량 통합 조회
 - **대화형 질문** — Claude가 질문하면 번호로 선택
+- **메시지 대기열** — Claude 처리 중 보낸 메시지는 자동으로 대기열에 추가되어 순서대로 처리
 - **자동 업데이트** — `/update_bot`으로 GitHub에서 최신 버전 확인 및 자동 적용
+- **중복 실행 방지** — 시작 시 중복 봇 프로세스를 자동 감지하고 종료
 - **슬래시 명령어** — Claude Code 슬래시 명령어 (`/compact`, `/review` 등)를 텔레그램에서 직접 사용
+- **OMC 스킬 지원** — `/autopilot`, `/ralph`, `/team` 등 oh-my-claudecode 스킬 전체 지원
+- **설정 UI** — `/settings`로 인라인 키보드를 통해 비용 표시, 상태 메시지, 토큰 범위 전환
 - **부팅 시 자동 시작** — systemd (Linux), launchd (macOS), 작업 스케줄러 (Windows), .bashrc (WSL)
 - **외부 의존성 없음** — 순수 Python, pip 패키지 불필요
-- **한/영 지원** — 한국어, 영어 버전 선택 가능
+- **i18n** — 단일 코드베이스 + JSON 언어팩 (한국어 / 영어)
 
 ## 빠른 시작
 
@@ -300,12 +403,22 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 1. 필수 프로그램 확인 (Python, Claude CLI)
 2. 언어 선택 (한국어 / English)
 3. 봇 토큰, Chat ID, 작업 디렉토리 입력 받기
-4. GitHub에서 봇 다운로드
+4. GitHub에서 전체 모듈 다운로드
 5. `config.json`에 설정 저장 (토큰은 로컬에만 보관)
 6. OS별 자동 시작 서비스 등록
 7. 봇 즉시 시작
 
 실행 후 텔레그램에서 `/help`을 보내서 확인하세요.
+
+## v1에서 업그레이드
+
+기존 단일 파일 봇 (`telegram-bot-ko.py` / `telegram-bot-en.py`) 사용 중이라면, 텔레그램에서 `/update_bot`만 실행하세요. 봇이 자동으로:
+
+1. GitHub에서 마이그레이션 스크립트 다운로드
+2. v2 모듈 파일 전체 다운로드
+3. 새로운 `main.py`로 재시작
+
+수동 작업 없이 자동 전환됩니다. `config.json`은 그대로 유지됩니다.
 
 ## 명령어
 
@@ -318,8 +431,14 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 | `/cost` | 비용 정보 (요청별 + 봇 세션 + 전체 세션 토큰 사용량) |
 | `/status` | 봇 상태 (세션, 모델, 상태) |
 | `/cancel` | 실행 중인 Claude 프로세스 취소 |
+| `/settings` | 봇 설정 (인라인 키보드) |
+| `/total_tokens` | 전체 PC 토큰 사용량 집계 |
+| `/pwd` | 현재 작업 디렉토리 |
+| `/cd [경로]` | 디렉토리 이동 |
+| `/ls [경로]` | 파일/폴더 목록 |
 | `/update_bot` | GitHub에서 최신 버전 확인 및 자동 업데이트 |
 | `/builtin` | CLI 빌트인 명령어 목록 |
+| `/skills` | OMC 스킬 목록 |
 
 ## 보안 참고사항
 
