@@ -394,6 +394,7 @@ def _bootstrap_files():
     except FileNotFoundError:
         pass  # file missing, need bootstrap
 
+    import base64
     import hashlib
     import urllib.request
     github_repo = config._config.get("github_repo", "xmin-02/Claude-telegram-bot")
@@ -409,24 +410,29 @@ def _bootstrap_files():
                 continue
             rel_path = item["path"][4:]
             local_path = os.path.join(bot_dir, rel_path)
-            raw_url = f"https://raw.githubusercontent.com/{github_repo}/main/bot/{rel_path}"
-            tmp_path = local_path + ".new"
+            # Compare git blob SHA — skip if unchanged
+            if os.path.exists(local_path):
+                try:
+                    with open(local_path, "rb") as f:
+                        data = f.read()
+                    local_sha = hashlib.sha1(f"blob {len(data)}\0".encode() + data).hexdigest()
+                    if local_sha == item["sha"]:
+                        continue
+                except Exception:
+                    pass
+            # Download via Contents API (no CDN cache)
             try:
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                urllib.request.urlretrieve(raw_url, tmp_path)
-                if os.path.exists(local_path):
-                    with open(local_path, "rb") as f:
-                        old_hash = hashlib.sha256(f.read()).hexdigest()
-                    with open(tmp_path, "rb") as f:
-                        new_hash = hashlib.sha256(f.read()).hexdigest()
-                    if old_hash == new_hash:
-                        os.remove(tmp_path)
-                        continue
-                os.replace(tmp_path, local_path)
+                contents_url = f"https://api.github.com/repos/{github_repo}/contents/bot/{rel_path}?ref=main"
+                creq = urllib.request.Request(contents_url, headers={"Accept": "application/vnd.github.v3+json"})
+                cresp = urllib.request.urlopen(creq, timeout=15)
+                cdata = json.loads(cresp.read().decode())
+                content = base64.b64decode(cdata["content"])
+                with open(local_path, "wb") as f:
+                    f.write(content)
                 count += 1
             except Exception:
-                try: os.remove(tmp_path)
-                except Exception: pass
+                pass
         log.info("Bootstrap complete: %d files updated", count)
         if count > 0:
             log.info("Restarting after bootstrap...")
