@@ -1,6 +1,7 @@
 """Read-only HTTP file viewer for modified files with diff and rollback."""
 import difflib
 import html
+import json
 import mimetypes
 import os
 import secrets
@@ -54,6 +55,37 @@ _CODE_EXTS = {
     ".txt", ".log", ".csv",
 }
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico"}
+
+# Extension → highlight.js language mapping
+_EXT_TO_LANG = {
+    ".py": "python", ".js": "javascript", ".ts": "typescript",
+    ".jsx": "javascript", ".tsx": "typescript", ".json": "json",
+    ".html": "xml", ".css": "css", ".scss": "scss",
+    ".md": "markdown", ".yaml": "yaml", ".yml": "yaml",
+    ".toml": "ini", ".sh": "bash", ".bash": "bash",
+    ".xml": "xml", ".sql": "sql", ".go": "go",
+    ".rs": "rust", ".java": "java", ".c": "c",
+    ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
+    ".rb": "ruby", ".php": "php", ".swift": "swift",
+    ".kt": "kotlin", ".scala": "scala", ".lua": "lua",
+    ".pl": "perl", ".ini": "ini", ".cfg": "ini",
+    ".conf": "ini", ".log": "plaintext", ".txt": "plaintext",
+    ".vue": "xml", ".svelte": "xml", ".r": "r",
+    ".dockerfile": "dockerfile", ".graphql": "graphql",
+}
+
+
+def _get_lang(path):
+    """Get highlight.js language class from file path."""
+    _, ext = os.path.splitext(path)
+    lang = _EXT_TO_LANG.get(ext.lower(), "")
+    basename = os.path.basename(path).lower()
+    if not lang:
+        if basename == "dockerfile":
+            lang = "dockerfile"
+        elif basename == "makefile":
+            lang = "makefile"
+    return lang
 
 
 def _file_type(path):
@@ -126,6 +158,69 @@ def _read_snapshot(snapshot_name):
             return f.read()
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Viewer i18n (embedded for client-side switching)
+# ---------------------------------------------------------------------------
+_VIEWER_I18N = {
+    "ko": {
+        "title": "수정된 파일", "read_only": "읽기 전용",
+        "clear": "삭제", "rollback": "롤백", "diff_tool": "Diff",
+        "back_list": "\u2190 목록", "download": "\u2b07 다운로드", "copy": "복사", "copied": "복사됨!",
+        "search_ph": "파일 검색...", "search_name": "파일명", "search_path": "경로",
+        "sort_time": "시간순", "sort_name": "이름순", "sort_type": "타입순",
+        "op_write": "작성됨", "op_edit": "수정됨", "op_delete": "삭제됨",
+        "op_rollback": "롤백됨", "op_rb_backup": "백업됨",
+        "ts_fmt": "{ts}에 {op}", "mods": "건의 수정", "cur_only": "현재만",
+        "snapshot": "스냅샷", "cycle_rb": "사이클 롤백",
+        "cycle_desc": "롤백할 사이클을 선택하세요. 해당 사이클에서 수정된 모든 파일이 이전 상태로 복원됩니다.",
+        "cancel": "취소", "files_unit": "파일",
+        "lines_hidden": "줄 숨김", "no_diff": "차이가 없습니다.",
+        "del_title": "삭제됨", "del_msg": "이 파일은 삭제되었습니다.",
+        "del_hint": "파일 목록의 히스토리 드롭다운에서 이전 스냅샷을 확인하세요.",
+        "no_preview": "이 파일 유형은 미리보기를 지원하지 않습니다.\n위의 다운로드 버튼을 사용하세요.",
+        "cfm_clear": "모든 파일 히스토리를 삭제하시겠습니까?\\n이 작업은 되돌릴 수 없습니다.",
+        "cfm_rb": "이 스냅샷으로 파일을 롤백하시겠습니까?\\n현재 파일은 먼저 백업됩니다.",
+        "cfm_cycle": "이 사이클의 모든 파일을 이전 상태로 롤백하시겠습니까?\\n현재 파일은 먼저 백업됩니다.",
+        "rb_done": "롤백 완료!", "cycle_done": "사이클 롤백 완료!",
+        "failed": "실패: ", "req_fail": "요청 실패.",
+        "dt_title": "Diff 비교 도구", "dt_select": "파일 선택",
+        "dt_hint": "스냅샷이 2개 이상인 파일만 표시됩니다",
+        "dt_left": "좌측 (이전)", "dt_right": "우측 (이후)",
+        "dt_ordered": "자동 시간순 정렬됨", "dt_no_files": "비교 가능한 파일이 없습니다.",
+        "dt_select_both": "양쪽 스냅샷을 선택하세요.",
+    },
+    "en": {
+        "title": "Modified Files", "read_only": "Read-only view",
+        "clear": "Clear", "rollback": "Rollback", "diff_tool": "Diff",
+        "back_list": "\u2190 List", "download": "\u2b07 Download", "copy": "Copy", "copied": "Copied!",
+        "search_ph": "Search files...", "search_name": "Filename", "search_path": "Path",
+        "sort_time": "Time", "sort_name": "Name", "sort_type": "Type",
+        "op_write": "Created", "op_edit": "Modified", "op_delete": "Deleted",
+        "op_rollback": "Rolled back", "op_rb_backup": "Backed up",
+        "ts_fmt": "{op} at {ts}", "mods": "modification(s)", "cur_only": "current only",
+        "snapshot": "snapshot", "cycle_rb": "Cycle Rollback",
+        "cycle_desc": "Select a cycle to rollback. All files modified in that cycle will be restored.",
+        "cancel": "Cancel", "files_unit": "files",
+        "lines_hidden": "lines hidden", "no_diff": "No differences found.",
+        "del_title": "Deleted", "del_msg": "This file has been deleted.",
+        "del_hint": "Check the history dropdown on the file list for previous snapshots.",
+        "no_preview": "Preview not available for this file type.\nUse the download button above.",
+        "cfm_clear": "Clear all file history?\\nThis cannot be undone.",
+        "cfm_rb": "Rollback to this snapshot?\\nCurrent file will be backed up first.",
+        "cfm_cycle": "Rollback ALL files in this cycle?\\nAll current files will be backed up first.",
+        "rb_done": "Rollback complete!", "cycle_done": "Cycle rollback complete!",
+        "failed": "Failed: ", "req_fail": "Request failed.",
+        "dt_title": "Diff Compare Tool", "dt_select": "Select file",
+        "dt_hint": "Only files with 2+ snapshots shown",
+        "dt_left": "Left (older)", "dt_right": "Right (newer)",
+        "dt_ordered": "Auto time-ordered", "dt_no_files": "No files for comparison.",
+        "dt_select_both": "Select both snapshots to compare.",
+    },
+}
+
+_VIEWER_I18N_JSON = json.dumps(_VIEWER_I18N, ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +396,56 @@ pre.code { background: #161b22; border: 1px solid #21262d; border-radius: 6px;
                        padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 0.85em; }
 .rb-btns .btn-cancel:hover { background: #21262d; }
 
+/* Toolbar: search + sort + lang + diff button */
+.toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.toolbar input[type="text"] { flex: 1; min-width: 120px; background: #161b22; border: 1px solid #30363d;
+    color: #c9d1d9; padding: 6px 12px; border-radius: 6px; font-size: 0.85em; outline: none; }
+.toolbar input[type="text"]:focus { border-color: #58a6ff; }
+.toolbar input[type="text"]::placeholder { color: #484f58; }
+.toolbar select { background: #161b22; border: 1px solid #30363d; color: #8b949e; padding: 6px 8px;
+    border-radius: 6px; font-size: 0.8em; cursor: pointer; outline: none; }
+.toolbar select:focus { border-color: #58a6ff; }
+.diff-tool-btn { background: transparent; border: 1px solid #58a6ff; color: #58a6ff;
+    padding: 5px 12px; border-radius: 6px; font-size: 0.8em; cursor: pointer;
+    transition: background 0.2s, color 0.2s; text-decoration: none; white-space: nowrap; }
+.diff-tool-btn:hover { background: #58a6ff; color: #fff; }
+
+/* Code view: highlight.js + line numbers */
+.code-wrap { position: relative; border: 1px solid #21262d; border-radius: 6px;
+             overflow: hidden; margin: 15px 0; }
+.code-wrap .copy-btn { position: absolute; top: 8px; right: 8px; background: #21262d;
+    border: 1px solid #30363d; color: #8b949e; padding: 4px 10px; border-radius: 4px;
+    font-size: 0.75em; cursor: pointer; z-index: 2; transition: background 0.2s, color 0.2s; }
+.code-wrap .copy-btn:hover { background: #30363d; color: #c9d1d9; }
+.code-wrap .copy-btn.ok { background: #238636; color: #fff; border-color: #238636; }
+.code-container { display: flex; overflow-x: auto; }
+.code-container .line-nums { padding: 16px 0; background: #0d1117; border-right: 1px solid #21262d;
+    user-select: none; flex-shrink: 0; text-align: right; }
+.code-container .line-nums span { display: block; padding: 0 12px 0 16px; color: #484f58;
+    font-family: 'Consolas','Monaco','Courier New',monospace; font-size: 0.82em; line-height: 1.55; }
+.code-container pre { flex: 1; margin: 0; padding: 16px; background: #161b22; overflow-x: visible; }
+.code-container pre code { font-size: 0.85em; line-height: 1.55; background: transparent !important;
+    padding: 0 !important; }
+
+/* Diff tool page */
+.dt-panel { background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+            padding: 20px; margin-bottom: 16px; }
+.dt-panel label { color: #8b949e; font-size: 0.85em; display: block; margin-bottom: 6px; }
+.dt-panel select { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 8px 12px; border-radius: 6px; font-size: 0.85em; outline: none; cursor: pointer; }
+.dt-panel select:focus { border-color: #58a6ff; }
+.dt-panel select:disabled { opacity: 0.4; cursor: not-allowed; }
+.dt-snap-row { display: flex; gap: 16px; margin-top: 12px; }
+.dt-snap-row > div { flex: 1; }
+.dt-info { color: #3fb950; font-size: 0.78em; margin-top: 6px; text-align: center; }
+.dt-hint { color: #484f58; font-size: 0.82em; }
+.dt-result { margin-top: 16px; }
+
+/* Language selector */
+.lang-sel { background: #161b22; border: 1px solid #30363d; color: #8b949e; padding: 4px 6px;
+    border-radius: 4px; font-size: 0.75em; cursor: pointer; outline: none; }
+.lang-sel:focus { border-color: #58a6ff; }
+
 /* Cycle rollback modal */
 .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
                  background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: center; }
@@ -323,8 +468,38 @@ pre.code { background: #161b22; border: 1px solid #21262d; border-radius: 6px;
 .modal-close:hover { background: #21262d; }
 """
 
-_JS = """
+_JS = ("""
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
 <script>
+var VI18N=""" + _VIEWER_I18N_JSON + """;
+var _lang=localStorage.getItem('fv_lang')||'ko';
+function T(k){return (VI18N[_lang]||VI18N.ko)[k]||k;}
+function applyI18n(){
+  document.querySelectorAll('[data-i18n]').forEach(function(el){
+    var k=el.getAttribute('data-i18n');
+    var v=T(k);if(v)el.textContent=v;
+  });
+  document.querySelectorAll('[data-i18n-ph]').forEach(function(el){
+    el.placeholder=T(el.getAttribute('data-i18n-ph'));
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(function(el){
+    el.title=T(el.getAttribute('data-i18n-title'));
+  });
+  // ts+op dynamic
+  document.querySelectorAll('[data-ts-op]').forEach(function(el){
+    var ts=el.dataset.ts, op=el.dataset.tsOp;
+    var opLabel=T('op_'+op);
+    el.textContent=T('ts_fmt').replace('{ts}',ts).replace('{op}',opLabel);
+  });
+  // lang selector sync
+  var ls=document.getElementById('lang-sel');
+  if(ls)ls.value=_lang;
+}
+function switchLang(lang){
+  _lang=lang;localStorage.setItem('fv_lang',lang);applyI18n();
+}
+// Existing functions
 function toggleHistory(btn, id) {
   var el = document.getElementById(id);
   if (!el) return;
@@ -332,18 +507,18 @@ function toggleHistory(btn, id) {
   el.classList.toggle('open');
 }
 function clearHistory(url) {
-  if (!confirm('Are you sure you want to clear all file history?\\nThis cannot be undone.')) return;
-  fetch(url, {method:'POST'}).then(r => {
+  if (!confirm(T('cfm_clear'))) return;
+  fetch(url, {method:'POST'}).then(function(r){
     if (r.ok) location.reload();
-    else alert('Failed to clear history.');
-  }).catch(() => alert('Request failed.'));
+    else alert(T('req_fail'));
+  }).catch(function(){alert(T('req_fail'));});
 }
 function doRollbackFile(url) {
-  if (!confirm('Rollback this file to the selected snapshot?\\nCurrent file will be backed up first.')) return;
-  fetch(url, {method:'POST'}).then(r => {
-    if (r.ok) { alert('Rollback complete!'); location.reload(); }
-    else r.text().then(t => alert('Failed: ' + t));
-  }).catch(() => alert('Request failed.'));
+  if (!confirm(T('cfm_rb'))) return;
+  fetch(url, {method:'POST'}).then(function(r){
+    if (r.ok) { alert(T('rb_done')); location.reload(); }
+    else r.text().then(function(t){alert(T('failed') + t);});
+  }).catch(function(){alert(T('req_fail'));});
 }
 function showCycleModal() {
   document.getElementById('cycle-modal').classList.add('open');
@@ -352,14 +527,118 @@ function closeCycleModal() {
   document.getElementById('cycle-modal').classList.remove('open');
 }
 function doRollbackCycle(url) {
-  if (!confirm('Rollback ALL files in this cycle to their previous state?\\nAll current files will be backed up first.')) return;
-  fetch(url, {method:'POST'}).then(r => {
-    if (r.ok) { alert('Cycle rollback complete!'); location.reload(); }
-    else r.text().then(t => alert('Failed: ' + t));
-  }).catch(() => alert('Request failed.'));
+  if (!confirm(T('cfm_cycle'))) return;
+  fetch(url, {method:'POST'}).then(function(r){
+    if (r.ok) { alert(T('cycle_done')); location.reload(); }
+    else r.text().then(function(t){alert(T('failed') + t);});
+  }).catch(function(){alert(T('req_fail'));});
 }
+// Copy code
+function copyCode(btn){
+  var pre=btn.closest('.code-wrap').querySelector('pre code');
+  if(!pre)return;
+  navigator.clipboard.writeText(pre.textContent).then(function(){
+    btn.textContent=T('copied');btn.classList.add('ok');
+    setTimeout(function(){btn.textContent=T('copy');btn.classList.remove('ok');},1500);
+  });
+}
+// Search files
+function filterFiles(q){
+  q=q.toLowerCase();
+  var mode=(document.getElementById('search-mode')||{}).value||'name';
+  document.querySelectorAll('.file-entry').forEach(function(el){
+    var target=mode==='path'?(el.dataset.fpath||''):(el.dataset.fname||'');
+    var match=!q||target.toLowerCase().indexOf(q)>=0;
+    el.style.display=match?'':'none';
+    // also show/hide associated history dropdown
+    var hid=el.dataset.histId;
+    if(hid){var h=document.getElementById(hid);if(h&&!match){h.classList.remove('open');}}
+  });
+  // hide empty groups
+  document.querySelectorAll('details.dir-group').forEach(function(g){
+    var vis=g.querySelectorAll('.file-entry[style=""], .file-entry:not([style])');
+    g.style.display=vis.length?'':'none';
+  });
+  document.querySelectorAll('details.date-group').forEach(function(g){
+    var vis=g.querySelectorAll('details.dir-group[style=""], details.dir-group:not([style])');
+    g.style.display=vis.length?'':'none';
+  });
+}
+// Sort files
+function sortFiles(by){
+  var container=document.getElementById('file-list-container');
+  if(!container)return;
+  var entries=Array.from(container.querySelectorAll('.file-entry'));
+  entries.sort(function(a,b){
+    if(by==='name')return (a.dataset.fname||'').localeCompare(b.dataset.fname||'');
+    if(by==='type')return (a.dataset.ftype||'').localeCompare(b.dataset.ftype||'');
+    return (b.dataset.fts||'').localeCompare(a.dataset.fts||''); // time desc
+  });
+  // Re-render as flat list (collapse groups)
+  var flat=document.getElementById('flat-file-list');
+  if(!flat)return;
+  var grouped=document.getElementById('grouped-file-list');
+  if(by==='time'){
+    flat.style.display='none';grouped.style.display='';
+  } else {
+    flat.innerHTML='';
+    entries.forEach(function(e){
+      var clone=e.cloneNode(true);
+      flat.appendChild(clone);
+      // also clone its history dropdown if any
+      var hid=e.dataset.histId;
+      if(hid){var h=document.getElementById(hid);if(h)flat.appendChild(h.cloneNode(true));}
+    });
+    flat.style.display='';grouped.style.display='none';
+  }
+}
+// Highlight.js init
+function initHL(){
+  document.querySelectorAll('pre code[class*="language-"]').forEach(function(b){
+    hljs.highlightElement(b);
+  });
+}
+// Diff tool
+function dtFileChange(sel,token){
+  var path=sel.value;
+  var lSel=document.getElementById('dt-snap-l');
+  var rSel=document.getElementById('dt-snap-r');
+  lSel.innerHTML='<option value="">--</option>';
+  rSel.innerHTML='<option value="">--</option>';
+  lSel.disabled=!path;rSel.disabled=!path;
+  document.getElementById('dt-result').innerHTML='';
+  document.getElementById('dt-info').textContent='';
+  if(!path||!window._dtFiles)return;
+  var snaps=window._dtFiles[path]||[];
+  snaps.forEach(function(s){
+    var opt='<option value="'+s.snap+'">'+s.label+'</option>';
+    lSel.innerHTML+=opt;rSel.innerHTML+=opt;
+  });
+}
+function dtSnapChange(token){
+  var lSnap=document.getElementById('dt-snap-l').value;
+  var rSnap=document.getElementById('dt-snap-r').value;
+  var info=document.getElementById('dt-info');
+  var result=document.getElementById('dt-result');
+  if(!lSnap||!rSnap){result.innerHTML='';info.textContent='';return;}
+  if(lSnap===rSnap){result.innerHTML='<div class="no-preview">'+T('no_diff')+'</div>';info.textContent='';return;}
+  // Auto-order: older on left
+  var lTs=lSnap.substring(0,15);var rTs=rSnap.substring(0,15);
+  var swapped=false;
+  if(lTs>rTs){var tmp=lSnap;lSnap=rSnap;rSnap=tmp;swapped=true;}
+  if(swapped)info.textContent=T('dt_ordered');
+  else info.textContent='';
+  result.innerHTML='<div style="color:#8b949e;text-align:center;padding:20px">Loading...</div>';
+  fetch('/diff-fragment/'+token+'/'+lSnap+'/'+rSnap).then(function(r){
+    if(r.ok)return r.text();throw new Error();
+  }).then(function(h){result.innerHTML=h;}).catch(function(){
+    result.innerHTML='<div class="no-preview">'+T('req_fail')+'</div>';
+  });
+}
+document.addEventListener('DOMContentLoaded',function(){initHL();applyI18n();});
 </script>
-"""
+""")
+
 
 
 def _op_label(op):
@@ -522,10 +801,14 @@ def _page_list(entries, session_token):
                         f'<a class="download-btn" href="/download/{session_token}/{idx}"'
                         f' title="Download" onclick="event.stopPropagation()">\u2b07</a>')
                 file_rows.append(f'''
-                <div class="{row_cls}" onclick="toggleHistory(this, '{hist_id}')">
+                <div class="{row_cls} file-entry" data-fname="{html.escape(fname)}"
+                     data-fpath="{html.escape(finfo['path'])}"
+                     data-ftype="{ftype}" data-fts="{finfo['latest_ts']}"
+                     data-hist-id="{hist_id}"
+                     onclick="toggleHistory(this, '{hist_id}')">
                     <span class="file-icon">{icon}</span>
                     <span class="file-name">{html.escape(fname)}</span>
-                    <span class="file-ts">{ts_display}\uc5d0 {op_text}</span>
+                    <span class="file-ts" data-ts-op="{latest_op}" data-ts="{ts_display}">{ts_display}\uc5d0 {op_text}</span>
                     <span class="file-size">{fsize}</span>
                     {dl_btn}
                 </div>
@@ -566,68 +849,103 @@ def _page_list(entries, session_token):
         modal_html = (
             f'<div class="modal-overlay" id="cycle-modal" onclick="if(event.target===this)closeCycleModal()">'
             f'<div class="modal">'
-            f'<h2>\u21a9 Cycle Rollback</h2>'
-            f'<p style="color:#8b949e;font-size:0.85em;margin-bottom:12px">'
-            f'Select a cycle to rollback. All files modified in that cycle will be restored to their previous state.</p>'
+            f'<h2>\u21a9 <span data-i18n="cycle_rb">Cycle Rollback</span></h2>'
+            f'<p style="color:#8b949e;font-size:0.85em;margin-bottom:12px" data-i18n="cycle_desc">'
+            f'Select a cycle to rollback.</p>'
             f'{"".join(cycle_items)}'
-            f'<button class="modal-close" onclick="closeCycleModal()">Cancel</button>'
+            f'<button class="modal-close" onclick="closeCycleModal()" data-i18n="cancel">Cancel</button>'
             f'</div></div>')
 
     total_unique = len(unique_files)
-    rollback_btn = (f'<button class="rollback-btn" onclick="showCycleModal()">\u21a9 Rollback</button>'
+    rollback_btn = (f'<button class="rollback-btn" onclick="showCycleModal()">'
+                    f'\u21a9 <span data-i18n="rollback">Rollback</span></button>'
                     if cycle_items else "")
+    diff_tool_btn = (f'<a class="diff-tool-btn" href="/diff-tool/{session_token}"'
+                     f' data-i18n="diff_tool">Diff</a>')
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Modified Files</title><style>{_CSS}</style></head>
 <body><div class="container">
 <div class="header-row">
-  <div><h1>\U0001f4c2 Modified Files ({total_unique})</h1>
-  <p class="subtitle">\U0001f512 Read-only view</p></div>
+  <div><h1>\U0001f4c2 <span data-i18n="title">Modified Files</span> ({total_unique})</h1>
+  <p class="subtitle">\U0001f512 <span data-i18n="read_only">Read-only view</span></p></div>
   <div class="header-btns">
+    <select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">
+      <option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option>
+    </select>
+    {diff_tool_btn}
     {rollback_btn}
-    <button class="clear-btn" onclick="clearHistory('/clear/{session_token}')">\U0001f5d1 Clear</button>
+    <button class="clear-btn" onclick="clearHistory('/clear/{session_token}')">
+      \U0001f5d1 <span data-i18n="clear">Clear</span></button>
   </div>
 </div>
+<div class="toolbar">
+  <input type="text" id="search-input" data-i18n-ph="search_ph" placeholder="\ud30c\uc77c \uac80\uc0c9..."
+         oninput="filterFiles(this.value)">
+  <select id="search-mode" onchange="filterFiles(document.getElementById('search-input').value)">
+    <option value="name" data-i18n="search_name">\ud30c\uc77c\uba85</option>
+    <option value="path" data-i18n="search_path">\uacbd\ub85c</option>
+  </select>
+  <select onchange="sortFiles(this.value)">
+    <option value="time" data-i18n="sort_time">\uc2dc\uac04\uc21c</option>
+    <option value="name" data-i18n="sort_name">\uc774\ub984\uc21c</option>
+    <option value="type" data-i18n="sort_type">\ud0c0\uc785\uc21c</option>
+  </select>
+</div>
 <hr class="separator">
-{''.join(rows)}
+<div id="grouped-file-list">{''.join(rows)}</div>
+<div id="flat-file-list" style="display:none"></div>
 <hr class="separator">
-<div class="footer">\U0001f512 Read-only &middot; Session access</div>
+<div class="footer">\U0001f512 <span data-i18n="read_only">Read-only</span> &middot; Session access</div>
 </div>{modal_html}{_JS}</body></html>"""
+
+
+def _render_code_block(text, path):
+    """Render code with highlight.js + line numbers + copy button."""
+    lang = _get_lang(path)
+    lines = text.split("\n")
+    line_nums = "".join(f"<span>{i}</span>" for i in range(1, len(lines) + 1))
+    lang_cls = f' class="language-{lang}"' if lang else ""
+    return (f'<div class="code-wrap">'
+            f'<button class="copy-btn" onclick="copyCode(this)" data-i18n="copy">Copy</button>'
+            f'<div class="code-container">'
+            f'<div class="line-nums">{line_nums}</div>'
+            f'<pre><code{lang_cls}>{html.escape(text)}</code></pre>'
+            f'</div></div>')
 
 
 def _page_view(fpath, idx, session_token, title_suffix=""):
     """Generate the file view HTML page."""
     fname = os.path.basename(fpath)
     ftype = _file_type(fpath)
-    back_link = f'<a href="/list/{session_token}">\u2190 List</a>'
-    download_link = f'<a class="download-btn" href="/download/{session_token}/{idx}">\u2b07 Download</a>'
+    back_link = f'<a href="/list/{session_token}" data-i18n="back_list">\u2190 List</a>'
+    download_link = (f'<a class="download-btn" href="/download/{session_token}/{idx}"'
+                     f' data-i18n="download">\u2b07 Download</a>')
 
     content_html = ""
     if ftype == "code":
         try:
             with open(fpath, encoding="utf-8", errors="replace") as f:
                 text = f.read()
-            lines = text.split("\n")
-            numbered = []
-            for i, line in enumerate(lines, 1):
-                numbered.append(f'<span class="line-num">{i}</span>{html.escape(line)}')
-            content_html = '<pre class="code">' + "\n".join(numbered) + "</pre>"
+            content_html = _render_code_block(text, fpath)
         except Exception as e:
             content_html = f'<div class="no-preview">Cannot read file: {html.escape(str(e))}</div>'
     elif ftype == "image":
         content_html = f'<img class="img-preview" src="/raw/{session_token}/{idx}" alt="{html.escape(fname)}">'
     else:
-        content_html = '<div class="no-preview">Preview not available for this file type.<br>Use the download button above.</div>'
+        content_html = '<div class="no-preview" data-i18n="no_preview">Preview not available.</div>'
 
     suffix_html = f'<span class="snap-label">{html.escape(title_suffix)}</span>' if title_suffix else ""
+    lang_sel = ('<select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">'
+                '<option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option></select>')
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(fname)}</title><style>{_CSS}</style></head>
 <body><div class="container">
-<div class="topbar">{back_link}<span class="fname">{html.escape(fname)}{suffix_html}</span>{download_link}</div>
+<div class="topbar">{back_link}<span class="fname">{html.escape(fname)}{suffix_html}</span>{lang_sel}{download_link}</div>
 <hr class="separator">
 {content_html}
-</div></body></html>"""
+</div>{_JS}</body></html>"""
 
 
 def _page_deleted(fpath, idx, session_token):
@@ -767,18 +1085,203 @@ def _page_diff(old_name, old_text, new_name, new_text, session_token):
             f'<col class="ln"><col class="mk"><col></colgroup>'
             f'{"".join(table_rows)}</table></div>')
 
+    lang_sel = ('<select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">'
+                '<option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option></select>')
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Diff</title><style>{_CSS}</style></head>
 <body><div class="container diff-page">
-<div class="topbar">{back_link}<span class="fname">Diff</span></div>
+<div class="topbar">{back_link}<span class="fname">Diff</span>{lang_sel}</div>
 <div class="diff-meta">
   <div style="color:#8b949e;font-size:0.85em">{html.escape(old_name)} \u2192 {html.escape(new_name)}</div>
   <div class="diff-stats"><span class="add-count">+{add_count}</span><span class="del-count">\u2212{del_count}</span></div>
 </div>
 <hr class="separator">
 {diff_html}
-</div></body></html>"""
+</div>{_JS}</body></html>"""
+
+
+def _diff_fragment(old_name, old_text, new_name, new_text):
+    """Generate just the diff HTML fragment (no full page wrapper). For AJAX loading."""
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
+    sm = difflib.SequenceMatcher(None, old_lines, new_lines)
+    table_rows = []
+    add_count = 0
+    del_count = 0
+    CONTEXT = 3
+
+    def _ctx_row(i, j, text):
+        esc = html.escape(text)
+        return (f'<tr><td class="ln">{i}</td><td class="mk"></td><td class="code">{esc}</td>'
+                f'<td class="gt"></td>'
+                f'<td class="ln">{j}</td><td class="mk"></td><td class="code">{esc}</td></tr>')
+
+    def _del_row(i, text):
+        return (f'<tr><td class="ln dl">{i}</td><td class="mk dl">\u2212</td><td class="code dl">{text}</td>'
+                f'<td class="gt"></td>'
+                f'<td class="ln el"></td><td class="mk el"></td><td class="code el"></td></tr>')
+
+    def _add_row(j, text):
+        return (f'<tr><td class="ln el"></td><td class="mk el"></td><td class="code el"></td>'
+                f'<td class="gt"></td>'
+                f'<td class="ln al">{j}</td><td class="mk al">+</td><td class="code al">{text}</td></tr>')
+
+    def _replace_row(i, old_html, j, new_html):
+        return (f'<tr><td class="ln dl">{i}</td><td class="mk dl">\u2212</td><td class="code dl">{old_html}</td>'
+                f'<td class="gt"></td>'
+                f'<td class="ln al">{j}</td><td class="mk al">+</td><td class="code al">{new_html}</td></tr>')
+
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            n = i2 - i1
+            if n > CONTEXT * 2 + 1:
+                for k in range(CONTEXT):
+                    table_rows.append(_ctx_row(i1+k+1, j1+k+1, old_lines[i1+k]))
+                folded = n - CONTEXT * 2
+                table_rows.append(
+                    f'<tr class="fold-row"><td colspan="3"></td><td class="gt"></td>'
+                    f'<td colspan="3"><span class="fold-icon">\u2195</span>{folded} lines hidden</td></tr>')
+                for k in range(CONTEXT):
+                    ii, jj = i2 - CONTEXT + k, j2 - CONTEXT + k
+                    table_rows.append(_ctx_row(ii+1, jj+1, old_lines[ii]))
+            else:
+                for i, j in zip(range(i1, i2), range(j1, j2)):
+                    table_rows.append(_ctx_row(i+1, j+1, old_lines[i]))
+        elif tag == "replace":
+            old_n = i2 - i1
+            new_n = j2 - j1
+            del_count += old_n
+            add_count += new_n
+            if max(old_n, new_n) > 2 * min(old_n, new_n):
+                for i in range(i1, i2):
+                    table_rows.append(_del_row(i+1, html.escape(old_lines[i])))
+                for j in range(j1, j2):
+                    table_rows.append(_add_row(j+1, html.escape(new_lines[j])))
+            else:
+                max_len = max(old_n, new_n)
+                for k in range(max_len):
+                    has_old = k < old_n
+                    has_new = k < new_n
+                    if has_old and has_new:
+                        oh, nh = _word_highlight(old_lines[i1+k], new_lines[j1+k])
+                        table_rows.append(_replace_row(i1+k+1, oh, j1+k+1, nh))
+                    elif has_old:
+                        table_rows.append(_del_row(i1+k+1, html.escape(old_lines[i1+k])))
+                    else:
+                        table_rows.append(_add_row(j1+k+1, html.escape(new_lines[j1+k])))
+        elif tag == "delete":
+            del_count += i2 - i1
+            for i in range(i1, i2):
+                table_rows.append(_del_row(i+1, html.escape(old_lines[i])))
+        elif tag == "insert":
+            add_count += j2 - j1
+            for j in range(j1, j2):
+                table_rows.append(_add_row(j+1, html.escape(new_lines[j])))
+
+    if not table_rows:
+        return '<div class="no-preview">No differences found.</div>'
+
+    return (
+        f'<div class="diff-fheader">'
+        f'<div><span class="fh-old">{html.escape(old_name)}</span></div>'
+        f'<div><span class="fh-new">{html.escape(new_name)}</span></div></div>'
+        f'<div class="diff-meta" style="border-radius:0;border-top:none;margin:0">'
+        f'<div></div>'
+        f'<div class="diff-stats"><span class="add-count">+{add_count}</span>'
+        f'<span class="del-count">\u2212{del_count}</span></div></div>'
+        f'<div class="diff-wrap" style="border-top:none;border-radius:0 0 8px 8px">'
+        f'<table class="diff-table">'
+        f'<colgroup><col class="ln"><col class="mk"><col>'
+        f'<col class="gt">'
+        f'<col class="ln"><col class="mk"><col></colgroup>'
+        f'{"".join(table_rows)}</table></div>')
+
+
+def _page_diff_tool(entries, session_token):
+    """Generate the interactive diff comparison tool page."""
+    back_link = f'<a href="/list/{session_token}" data-i18n="back_list">\u2190 List</a>'
+    lang_sel = ('<select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">'
+                '<option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option></select>')
+
+    # Build file → snapshots data for JS
+    file_map = defaultdict(list)
+    for entry in entries:
+        snap = entry.get("snapshot")
+        if not snap:
+            continue
+        path = entry["path"]
+        ts = entry.get("ts", "")
+        ts_fmt = _format_ts(ts)
+        op = entry.get("op", "edit")
+        run_id = entry.get("run_id", 0)
+        label = entry.get("run_label", "")
+        file_map[path].append({
+            "snap": snap, "ts": ts, "ts_fmt": ts_fmt,
+            "op": op, "run_id": run_id, "label": label[:50],
+        })
+
+    # Filter to files with 2+ snapshots, sort snapshots by time
+    diff_files = {}
+    for path, snaps in file_map.items():
+        if len(snaps) < 2:
+            continue
+        snaps.sort(key=lambda s: s["ts"])
+        items = []
+        for s in snaps:
+            disp = f'{s["ts_fmt"]} [{_op_label_short(s["op"])}]'
+            if s["run_id"]:
+                disp += f' (#{s["run_id"]})'
+            items.append({"snap": s["snap"], "label": disp})
+        diff_files[path] = items
+
+    diff_files_json = json.dumps(diff_files, ensure_ascii=False)
+
+    # Build file options
+    if diff_files:
+        file_options = ['<option value="">--</option>']
+        for path in sorted(diff_files.keys()):
+            fname = os.path.basename(path)
+            file_options.append(f'<option value="{html.escape(path)}">{html.escape(fname)}'
+                                f' <span style="color:#8b949e">({html.escape(os.path.dirname(path))})</span></option>')
+        file_select_html = "\n".join(file_options)
+        body_html = f"""
+<div class="dt-panel">
+  <label data-i18n="dt_select">\ud30c\uc77c \uc120\ud0dd</label>
+  <select id="dt-file" onchange="dtFileChange(this,'{session_token}')">
+    {file_select_html}
+  </select>
+  <div class="dt-hint" data-i18n="dt_hint">\uc2a4\ub0c5\uc0f7\uc774 2\uac1c \uc774\uc0c1\uc778 \ud30c\uc77c\ub9cc \ud45c\uc2dc\ub429\ub2c8\ub2e4</div>
+  <div class="dt-snap-row">
+    <div>
+      <label data-i18n="dt_left">\uc88c\uce21 (\uc774\uc804)</label>
+      <select id="dt-snap-l" disabled onchange="dtSnapChange('{session_token}')">
+        <option value="">--</option>
+      </select>
+    </div>
+    <div>
+      <label data-i18n="dt_right">\uc6b0\uce21 (\uc774\ud6c4)</label>
+      <select id="dt-snap-r" disabled onchange="dtSnapChange('{session_token}')">
+        <option value="">--</option>
+      </select>
+    </div>
+  </div>
+  <div class="dt-info" id="dt-info"></div>
+</div>
+<div class="dt-result diff-page" id="dt-result"></div>"""
+    else:
+        body_html = '<div class="no-preview" data-i18n="dt_no_files">No files for comparison.</div>'
+
+    return f"""<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Diff Tool</title><style>{_CSS}</style></head>
+<body><div class="container diff-page">
+<div class="topbar">{back_link}<span class="fname" data-i18n="dt_title">Diff \ube44\uad50 \ub3c4\uad6c</span>{lang_sel}</div>
+<hr class="separator">
+{body_html}
+</div>
+<script>window._dtFiles={diff_files_json};</script>
+{_JS}</body></html>"""
 
 
 def _page_snapshot(snapshot_name, session_token):
@@ -792,7 +1295,7 @@ def _page_snapshot(snapshot_name, session_token):
 
     fname = snapshot_name
     ftype = _file_type(snapshot_name)
-    back_link = f'<a href="/list/{session_token}">\u2190 List</a>'
+    back_link = f'<a href="/list/{session_token}" data-i18n="back_list">\u2190 List</a>'
 
     ts_label = ""
     try:
@@ -807,27 +1310,27 @@ def _page_snapshot(snapshot_name, session_token):
         try:
             with open(snapshot_path, encoding="utf-8", errors="replace") as f:
                 text = f.read()
-            lines = text.split("\n")
-            numbered = []
-            for i, line in enumerate(lines, 1):
-                numbered.append(f'<span class="line-num">{i}</span>{html.escape(line)}')
-            content_html = '<pre class="code">' + "\n".join(numbered) + "</pre>"
+            # Use original file path for language detection
+            from state import find_path_for_snapshot
+            orig_path = find_path_for_snapshot(snapshot_name) or snapshot_name
+            content_html = _render_code_block(text, orig_path)
         except Exception as e:
             content_html = f'<div class="no-preview">Cannot read snapshot: {html.escape(str(e))}</div>'
     elif ftype == "image":
         content_html = f'<img class="img-preview" src="/snapshot-raw/{session_token}/{snapshot_name}" alt="{html.escape(fname)}">'
     else:
-        content_html = '<div class="no-preview">Preview not available for this file type.</div>'
+        content_html = '<div class="no-preview" data-i18n="no_preview">Preview not available.</div>'
 
-    snap_badge = f'<span class="snap-label">\U0001f4cb Snapshot: {ts_label}</span>' if ts_label else ""
-    # Rollback button for snapshot view
+    snap_badge = f'<span class="snap-label">\U0001f4cb <span data-i18n="snapshot">Snapshot</span>: {ts_label}</span>' if ts_label else ""
     rb_btn = (f' <a href="javascript:void(0)" onclick="doRollbackFile(\'/rollback/{session_token}/{snapshot_name}\')"'
-              f' style="color:#d29922;font-size:0.85em;margin-left:10px">\u21a9 Rollback</a>')
+              f' style="color:#d29922;font-size:0.85em;margin-left:10px">\u21a9 <span data-i18n="rollback">Rollback</span></a>')
+    lang_sel = ('<select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">'
+                '<option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option></select>')
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Snapshot: {html.escape(fname)}</title><style>{_CSS}</style></head>
 <body><div class="container">
-<div class="topbar">{back_link}<span class="fname">{html.escape(fname)}{snap_badge}{rb_btn}</span></div>
+<div class="topbar">{back_link}<span class="fname">{html.escape(fname)}{snap_badge}{rb_btn}</span>{lang_sel}</div>
 <hr class="separator">
 {content_html}
 </div>{_JS}</body></html>"""
@@ -1080,6 +1583,23 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 return
             body = _page_diff(snap_old, old_text, snap_new, new_text, session_token)
             self._send_html(200, body)
+            return
+
+        if action == "diff-tool":
+            body = _page_diff_tool(self.modified_entries, session_token)
+            self._send_html(200, body)
+            return
+
+        if action == "diff-fragment" and len(path_parts) >= 4:
+            snap_old = path_parts[2]
+            snap_new = path_parts[3]
+            old_text = _read_snapshot(snap_old)
+            new_text = _read_snapshot(snap_new)
+            if old_text is None or new_text is None:
+                self._send_error(404, "Snapshot not found")
+                return
+            frag = _diff_fragment(snap_old, old_text, snap_new, new_text)
+            self._send_html(200, frag)
             return
 
         if action == "snapshot" and len(path_parts) >= 3:
