@@ -4,7 +4,7 @@ import json
 from commands import command, callback
 from i18n import t
 from config import TOKEN_PERIODS, settings, update_config, log
-from telegram import escape_html, send_html, tg_api, CHAT_ID, schedule_auto_dismiss, reset_auto_dismiss, cancel_auto_dismiss
+from telegram import escape_html, send_html, tg_api, CHAT_ID
 
 
 def _save_settings():
@@ -56,14 +56,12 @@ def _settings_text():
 
 @command("/settings")
 def handle_settings(text):
-    result = tg_api("sendMessage", {
+    tg_api("sendMessage", {
         "chat_id": CHAT_ID,
         "text": _settings_text(),
         "parse_mode": "HTML",
         "reply_markup": _settings_keyboard(),
     })
-    if result and result.get("ok"):
-        schedule_auto_dismiss(result["result"]["message_id"])
 
 
 @callback("stg:")
@@ -76,7 +74,6 @@ def handle_settings_callback(callback_id, msg_id, data):
         settings_keys = []
     key = data.split(":", 1)[1]
     if key == "close":
-        cancel_auto_dismiss(msg_id)
         tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": msg_id})
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id})
         return
@@ -97,7 +94,6 @@ def handle_settings_callback(callback_id, msg_id, data):
         tg_api("answerCallbackQuery", {"callback_query_id": callback_id, "text": f"{label}: {status}"})
     else:
         return
-    reset_auto_dismiss(msg_id)
     tg_api("editMessageText", {
         "chat_id": CHAT_ID,
         "message_id": msg_id,
