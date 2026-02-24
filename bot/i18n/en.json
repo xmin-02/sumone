@@ -90,6 +90,9 @@
   "queued": "Message queued (#{pos}). Will be processed automatically after current task.",
   "bot_duplicate": "Duplicate detected: terminated {count} existing bot process(es) and restarting.",
   "bot_started": "Claude Code Bot started\nSend /help to see available commands.",
+  "restart": {
+    "shutting_down": "Restarting bot..."
+  },
   "file_prompt": {
     "analyze_image": "Analyze this image file",
     "file_label": "File",
@@ -217,7 +220,8 @@
     ["cd", "Change directory"],
     ["ls", "List files/folders"],
     ["update_bot", "Update bot"],
-    ["total_tokens", "Total PC token usage summary"]
+    ["total_tokens", "Total PC token usage summary"],
+    ["restart_bot", "Restart bot"]
   ],
   "todo_count": "({count})",
   "plugin_menu": {
