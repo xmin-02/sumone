@@ -456,6 +456,42 @@ def _kill_duplicate_bots():
     return killed
 
 
+def _start_file_viewer():
+    """Start the file viewer HTTP server and cloudflared tunnel."""
+    from fileviewer import FileViewerServer
+    from tunnel import check_cloudflared, install_cloudflared, start_tunnel
+
+    server = FileViewerServer()
+    port = server.start()
+    state._file_server = server
+
+    if not check_cloudflared():
+        log.info("cloudflared not found, attempting install...")
+        if not install_cloudflared():
+            log.warning("cloudflared install failed. File viewer will be local-only.")
+            return
+
+    proc, url = start_tunnel(port)
+    if proc and url:
+        state._tunnel_proc = proc
+        state.file_viewer_url = url
+        log.info("File viewer ready: %s", url)
+    else:
+        log.warning("cloudflared tunnel failed. File viewer will be local-only.")
+
+
+def _stop_file_viewer():
+    """Stop the file viewer server and tunnel."""
+    from tunnel import stop_tunnel
+    if state._tunnel_proc:
+        stop_tunnel(state._tunnel_proc)
+        state._tunnel_proc = None
+        state.file_viewer_url = None
+    if state._file_server:
+        state._file_server.stop()
+        state._file_server = None
+
+
 def poll_loop():
     offset = 0
     log.info("Bot started.")
@@ -464,6 +500,9 @@ def poll_loop():
     killed = _kill_duplicate_bots()
 
     _sync_bot_commands()
+
+    # File viewer server + cloudflared tunnel
+    _start_file_viewer()
 
     # Token data publishing thread
     def _token_publish_loop():
@@ -578,6 +617,7 @@ def main():
 
     def sig_handler(signum, frame):
         log.info("Signal %s, exiting.", signum)
+        _stop_file_viewer()
         with state.lock:
             if state.claude_proc and state.claude_proc.poll() is None:
                 state.claude_proc.kill()

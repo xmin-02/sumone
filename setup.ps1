@@ -220,6 +220,19 @@ function Install-Bot {
     } | ConvertTo-Json
     [System.IO.File]::WriteAllText($script:CONFIG_PATH, $config, [System.Text.UTF8Encoding]::new($false))
     Write-Ok "Config saved: $($script:CONFIG_PATH)"
+
+    # Install cloudflared for file viewer
+    $cloudflaredPath = Join-Path $script:INSTALL_DIR "cloudflared.exe"
+    if (-not (Test-Path $cloudflaredPath)) {
+        Write-Info "Installing cloudflared for file viewer..."
+        try {
+            $cfUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+            Invoke-WebRequest -Uri $cfUrl -OutFile $cloudflaredPath -ErrorAction Stop
+            Write-Ok "cloudflared installed"
+        } catch {
+            Write-Warn "cloudflared install failed (file viewer will auto-install on first run): $_"
+        }
+    }
 }
 
 # --- Verify Token ---
