@@ -90,6 +90,9 @@
   "queued": "메시지가 대기열에 추가되었습니다. (#{pos}) 현재 작업 완료 후 자동으로 처리됩니다.",
   "bot_duplicate": "중복 실행 감지: 기존 봇 프로세스 {count}개를 종료하고 새로 시작합니다.",
   "bot_started": "Claude Code Bot 시작됨\n/help 로 명령어를 확인하세요.",
+  "restart": {
+    "shutting_down": "봇을 재시작합니다..."
+  },
   "file_prompt": {
     "analyze_image": "이 이미지 파일을 분석해줘",
     "file_label": "파일",
@@ -217,12 +220,16 @@
     ["cd", "디렉토리 이동"],
     ["ls", "파일/폴더 목록"],
     ["update_bot", "봇 업데이트"],
-    ["total_tokens", "전체 PC 토큰 사용량 집계"]
+    ["total_tokens", "전체 PC 토큰 사용량 집계"],
+    ["restart_bot", "봇 재시작"]
   ],
   "todo_count": "{count}개",
   "plugin_menu": {
     "title": "{plugin} 스킬 ({count}개)",
     "hint": "명령어를 탭하면 복사됩니다. 인자를 붙여서 전송하세요.",
     "botfather_desc": "{plugin} 플러그인 스킬 ({count}개)"
+  },
+  "file_viewer": {
+    "link": "수정된 파일 보기 ({count}개)"
   }
 }

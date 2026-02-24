@@ -28,7 +28,7 @@ A Telegram bot that bridges your phone to a running Claude Code CLI session. Sen
 - **Duplicate process guard** — Automatically detects and kills duplicate bot instances on startup
 - **Slash commands** — Use Claude Code slash commands (`/compact`, `/review`, etc.) directly from Telegram
 - **Plugin skill auto-discovery** — Automatically detects installed Claude Code plugins and creates per-plugin menu commands (e.g., `/omc`) with tap-to-copy skill lists
-- **Web file viewer** — Browse and download files modified by Claude through a secure web interface (cloudflared tunnel, read-only, session-scoped access tokens)
+- **Web file viewer** — Browse and download files modified by Claude through a secure web interface (cloudflared tunnel, read-only, one-time access tokens)
 - **Settings UI** — `/settings` with inline keyboard for toggling cost display, status messages, token range
 - **Auto-start on boot** — systemd (Linux), launchd (macOS), Task Scheduler (Windows), .bashrc (WSL)
 - **Zero dependencies** — Pure Python, no pip packages required
@@ -147,7 +147,7 @@ When Claude modifies files during a session, the bot automatically sends a secur
 
 - **Read-only** — View and download only; no editing or uploading
 - **Auto-detected** — Tracks `Edit` and `Write` tool usage from Claude CLI output
-- **Secure access** — Session-scoped token URL via cloudflared tunnel; valid until next Claude run
+- **Secure access** — One-time token URL via cloudflared tunnel; session tokens for navigation
 - **File type preview** — Code files with line numbers, images inline, other files download-only
 - **Auto-setup** — cloudflared is automatically downloaded on first run if not installed
 
@@ -393,7 +393,7 @@ MIT License. See [LICENSE](LICENSE) for details.
 - **중복 실행 방지** — 시작 시 중복 봇 프로세스를 자동 감지하고 종료
 - **슬래시 명령어** — Claude Code 슬래시 명령어 (`/compact`, `/review` 등)를 텔레그램에서 직접 사용
 - **플러그인 스킬 자동 탐색** — 설치된 Claude Code 플러그인을 자동 감지하여 플러그인별 메뉴 명령어 생성 (예: `/omc`), 탭하면 명령어 복사
-- **웹 파일 뷰어** — Claude가 수정한 파일을 안전한 웹 인터페이스로 열람/다운로드 (cloudflared 터널, 읽기 전용, 세션 범위 토큰)
+- **웹 파일 뷰어** — Claude가 수정한 파일을 안전한 웹 인터페이스로 열람/다운로드 (cloudflared 터널, 읽기 전용, 1회용 토큰)
 - **설정 UI** — `/settings`로 인라인 키보드를 통해 비용 표시, 상태 메시지, 토큰 범위 전환
 - **부팅 시 자동 시작** — systemd (Linux), launchd (macOS), 작업 스케줄러 (Windows), .bashrc (WSL)
 - **외부 의존성 없음** — 순수 Python, pip 패키지 불필요
