@@ -210,7 +210,7 @@ def process_update(update):
         return
 
     if state.waiting_token_input:
-        handle_token_input(text, user_msg_id=msg.get("message_id"))
+        handle_token_input(text)
         return
 
     if state.answering:
@@ -241,14 +241,145 @@ def process_update(update):
 # Bot command sync + startup
 # ---------------------------------------------------------------------------
 
+def _discover_plugin_skills():
+    """Scan installed Claude Code plugins and extract skills from SKILL.md files.
+
+    Returns a dict: {plugin_name: [(cmd, desc), ...], ...}
+
+    Only scans plugins listed in installed_plugins.json (actually installed).
+    Marketplace catalog directories are NOT scanned to avoid showing uninstalled plugins.
+    """
+    import re as _re
+    claude_dir = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
+    if not os.path.isdir(claude_dir):
+        return {}
+
+    grouped = {}  # {plugin_name: [(cmd, desc), ...]}
+    seen = set()
+
+    def _parse_skill_md(skill_md, plugin_name):
+        """Parse a single SKILL.md and append to grouped dict."""
+        try:
+            with open(skill_md, encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            return
+        m = _re.match(r"^---\r?\n(.*?)\r?\n---", content, _re.DOTALL)
+        if not m:
+            return
+        name = os.path.basename(os.path.dirname(skill_md))
+        desc = ""
+        for line in m.group(1).split("\n"):
+            colon = line.find(":")
+            if colon == -1:
+                continue
+            key = line[:colon].strip()
+            val = line[colon + 1:].strip().strip("'\"")
+            if key == "name":
+                name = val
+            elif key == "description":
+                desc = val
+        cmd = name.lower().replace("-", "_")
+        if cmd not in seen and desc:
+            seen.add(cmd)
+            grouped.setdefault(plugin_name, []).append((cmd, desc))
+
+    def _scan_skills_dir(skills_dir, plugin_name):
+        """Scan a skills directory for SKILL.md files."""
+        if not os.path.isdir(skills_dir):
+            return
+        try:
+            entries = os.listdir(skills_dir)
+        except Exception:
+            return
+        for entry in entries:
+            skill_md = os.path.join(skills_dir, entry, "SKILL.md")
+            if os.path.isfile(skill_md):
+                _parse_skill_md(skill_md, plugin_name)
+
+    # 1. Installed plugins (installPath + plugin.json)
+    plugins_file = os.path.join(claude_dir, "installed_plugins.json")
+    if os.path.isfile(plugins_file):
+        try:
+            with open(plugins_file, encoding="utf-8") as f:
+                data = json.load(f)
+            for plugin_key, installs in data.get("plugins", {}).items():
+                # Prefer marketplace alias (after @) as it's shorter
+                # e.g. "oh-my-claudecode@omc" → "omc"
+                if "@" in plugin_key:
+                    plugin_name = plugin_key.split("@")[1]
+                else:
+                    plugin_name = plugin_key
+                for install in installs:
+                    install_path = install.get("installPath", "")
+                    if not install_path or not os.path.isdir(install_path):
+                        continue
+                    plugin_json = os.path.join(install_path, ".claude-plugin", "plugin.json")
+                    skills_dir = os.path.join(install_path, "skills")
+                    if os.path.isfile(plugin_json):
+                        try:
+                            with open(plugin_json, encoding="utf-8") as f:
+                                pdata = json.load(f)
+                            skills_rel = pdata.get("skills", "./skills/")
+                            skills_dir = os.path.normpath(os.path.join(install_path, skills_rel))
+                        except Exception:
+                            pass
+                    _scan_skills_dir(skills_dir, plugin_name)
+        except Exception:
+            pass
+
+    total = sum(len(v) for v in grouped.values())
+    log.info("Discovered %d plugin skills across %d plugins", total, len(grouped))
+    return grouped
+
+
 def _sync_bot_commands():
-    """Register bot commands with BotFather on startup."""
+    """Register bot commands with BotFather on startup.
+
+    - Bot-native commands: use i18n description
+    - Per-plugin menu commands (e.g. /omc): dynamically generated
+    - Individual plugin skills are NOT registered (shown via inline keyboard instead)
+    """
     try:
+        from commands import _handlers
+
+        # 1. Bot-native commands from i18n (localized descriptions)
+        bot_native = {k.lstrip("/").lower() for k in _handlers}
         bot_commands = i18n.t("bot_commands")
-        if isinstance(bot_commands, list):
-            commands_list = [{"command": c, "description": d} for c, d in bot_commands]
-            tg_api("setMyCommands", {"commands": json.dumps(commands_list)})
-            log.info("BotFather commands synced (%d commands)", len(commands_list))
+        if not isinstance(bot_commands, list):
+            bot_commands = []
+
+        merged = []
+        seen = set()
+        for cmd, desc in bot_commands:
+            key = cmd.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            if key in bot_native:
+                merged.append({"command": cmd, "description": desc[:256]})
+
+        # 2. Auto-discover plugin skills and register per-plugin menu commands
+        plugin_groups = _discover_plugin_skills()
+        from commands.skills import register_plugin_menus
+        register_plugin_menus(plugin_groups)
+
+        for plugin_name, skills_list in plugin_groups.items():
+            menu_cmd = plugin_name.lower().replace("-", "_")
+            if menu_cmd not in seen:
+                seen.add(menu_cmd)
+                desc = i18n.t("plugin_menu.botfather_desc",
+                              plugin=plugin_name, count=len(skills_list))
+                merged.append({"command": menu_cmd, "description": desc[:256]})
+
+        if merged:
+            result = tg_api("setMyCommands", {"commands": json.dumps(merged)})
+            if result and result.get("ok"):
+                plugin_count = len(plugin_groups)
+                log.info("BotFather commands synced (%d total: %d bot-native + %d plugin menus)",
+                         len(merged), len(merged) - plugin_count, plugin_count)
+            else:
+                log.warning("BotFather setMyCommands failed: %s", result)
     except Exception as e:
         log.warning("Failed to sync commands: %s", e)
 
