@@ -66,8 +66,48 @@ def get_current_run_id():
     return _current_run_id
 
 
+_SNAPSHOT_TTL_DAYS = 7
+_last_cleanup_ts = 0.0
+
+
+def cleanup_old_snapshots():
+    """Delete snapshot files older than _SNAPSHOT_TTL_DAYS. Keeps history entries but clears snapshot ref."""
+    global _last_cleanup_ts
+    now = time.time()
+    # Run at most once per hour
+    if now - _last_cleanup_ts < 3600:
+        return
+    _last_cleanup_ts = now
+    cutoff = datetime.now().timestamp() - _SNAPSHOT_TTL_DAYS * 86400
+    changed = False
+    for entry in state.modified_files:
+        snap = entry.get("snapshot")
+        if not snap:
+            continue
+        snap_path = os.path.join(_SNAPSHOTS_DIR, snap)
+        if not os.path.isfile(snap_path):
+            continue
+        try:
+            mtime = os.path.getmtime(snap_path)
+        except OSError:
+            continue
+        if mtime < cutoff:
+            try:
+                os.remove(snap_path)
+                log.info("Cleaned up old snapshot: %s", snap)
+            except OSError as e:
+                log.warning("Failed to remove old snapshot %s: %s", snap, e)
+                continue
+            entry["snapshot"] = None
+            changed = True
+    if changed:
+        save_modified_files(state.modified_files)
+        log.info("Snapshot cleanup complete (TTL=%d days)", _SNAPSHOT_TTL_DAYS)
+
+
 def add_modified_file(path, content=None, op="write"):
     """Add a file modification entry with optional snapshot. op: 'write', 'edit', 'delete', 'rollback'."""
+    cleanup_old_snapshots()
     os.makedirs(_SNAPSHOTS_DIR, exist_ok=True)
     now = datetime.now()
     ts = now.strftime("%Y-%m-%dT%H:%M:%S")

@@ -132,13 +132,18 @@ def _format_date(iso_ts):
 
 
 def _aggregate_files(entries):
-    """Aggregate entries by path. Returns list of {path, latest_ts, history}."""
+    """Aggregate entries by path. Returns list of {path, latest_ts, history}.
+    Hides rollback-backup entries from the UI (internal backups)."""
     file_map = defaultdict(list)
     for entry in entries:
         file_map[entry["path"]].append(entry)
     result = []
     for path, hist in file_map.items():
-        hist_sorted = sorted(hist, key=lambda e: e["ts"], reverse=True)
+        # Filter out rollback-backup entries (internal, noisy in UI)
+        visible_hist = [e for e in hist if e.get("op") != "rollback-backup"]
+        if not visible_hist:
+            continue
+        hist_sorted = sorted(visible_hist, key=lambda e: e["ts"], reverse=True)
         result.append({
             "path": path,
             "latest_ts": hist_sorted[0]["ts"],
@@ -173,8 +178,8 @@ _VIEWER_I18N = {
         "op_write": "작성됨", "op_edit": "수정됨", "op_delete": "삭제됨",
         "op_rollback": "롤백됨", "op_rb_backup": "백업됨",
         "ts_fmt": "{ts}에 {op}", "mods": "건의 수정", "cur_only": "현재만",
-        "snapshot": "스냅샷", "cycle_rb": "사이클 롤백",
-        "cycle_desc": "롤백할 사이클을 선택하세요. 해당 사이클에서 수정된 모든 파일이 이전 상태로 복원됩니다.",
+        "snapshot": "스냅샷", "cycle_rb": "시점 복원",
+        "cycle_desc": "복원할 시점을 선택하세요. 선택한 사이클의 상태로 모든 파일이 복원됩니다.",
         "cancel": "취소", "files_unit": "파일",
         "lines_hidden": "줄 숨김", "no_diff": "차이가 없습니다.",
         "del_title": "삭제됨", "del_msg": "이 파일은 삭제되었습니다.",
@@ -182,8 +187,8 @@ _VIEWER_I18N = {
         "no_preview": "이 파일 유형은 미리보기를 지원하지 않습니다.\n위의 다운로드 버튼을 사용하세요.",
         "cfm_clear": "모든 파일 히스토리를 삭제하시겠습니까?\\n이 작업은 되돌릴 수 없습니다.",
         "cfm_rb": "이 스냅샷으로 파일을 롤백하시겠습니까?\\n현재 파일은 먼저 백업됩니다.",
-        "cfm_cycle": "이 사이클의 모든 파일을 이전 상태로 롤백하시겠습니까?\\n현재 파일은 먼저 백업됩니다.",
-        "rb_done": "롤백 완료!", "cycle_done": "사이클 롤백 완료!",
+        "cfm_cycle": "이 시점으로 모든 파일을 복원하시겠습니까?\\n현재 파일은 먼저 백업됩니다.",
+        "rb_done": "롤백 완료!", "cycle_done": "시점 복원 완료!", "same_state": "현재와 동일한 시점입니다.",
         "failed": "실패: ", "req_fail": "요청 실패.",
         "dt_title": "Diff 비교 도구", "dt_select": "파일 선택",
         "dt_hint": "스냅샷이 2개 이상인 파일만 표시됩니다",
@@ -200,8 +205,8 @@ _VIEWER_I18N = {
         "op_write": "Created", "op_edit": "Modified", "op_delete": "Deleted",
         "op_rollback": "Rolled back", "op_rb_backup": "Backed up",
         "ts_fmt": "{op} at {ts}", "mods": "modification(s)", "cur_only": "current only",
-        "snapshot": "snapshot", "cycle_rb": "Cycle Rollback",
-        "cycle_desc": "Select a cycle to rollback. All files modified in that cycle will be restored.",
+        "snapshot": "snapshot", "cycle_rb": "Restore to Point",
+        "cycle_desc": "Select a cycle to restore to. All files will be restored to their state at that point.",
         "cancel": "Cancel", "files_unit": "files",
         "lines_hidden": "lines hidden", "no_diff": "No differences found.",
         "del_title": "Deleted", "del_msg": "This file has been deleted.",
@@ -209,8 +214,8 @@ _VIEWER_I18N = {
         "no_preview": "Preview not available for this file type.\nUse the download button above.",
         "cfm_clear": "Clear all file history?\\nThis cannot be undone.",
         "cfm_rb": "Rollback to this snapshot?\\nCurrent file will be backed up first.",
-        "cfm_cycle": "Rollback ALL files in this cycle?\\nAll current files will be backed up first.",
-        "rb_done": "Rollback complete!", "cycle_done": "Cycle rollback complete!",
+        "cfm_cycle": "Restore all files to this point?\\nAll current files will be backed up first.",
+        "rb_done": "Rollback complete!", "cycle_done": "Restore complete!", "same_state": "Already at this point.",
         "failed": "Failed: ", "req_fail": "Request failed.",
         "dt_title": "Diff Compare Tool", "dt_select": "Select file",
         "dt_hint": "Only files with 2+ snapshots shown",
@@ -227,119 +232,146 @@ _VIEWER_I18N_JSON = json.dumps(_VIEWER_I18N, ensure_ascii=False)
 # HTML Templates
 # ---------------------------------------------------------------------------
 _CSS = """
+:root {
+  --bg-base: #0d1117; --bg-raised: #161b22; --bg-overlay: #1c2128;
+  --border-muted: #21262d; --border-default: #30363d;
+  --text-primary: #c9d1d9; --text-secondary: #8b949e; --text-muted: #484f58;
+  --accent-blue: #58a6ff; --accent-blue-hover: #79c0ff;
+  --color-add: #3fb950; --color-del: #f85149; --color-warn: #d29922; --color-special: #a371f7;
+  --text-xs: 0.75rem; --text-sm: 0.85rem; --text-base: 1rem; --text-lg: 1.2rem;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Pretendard', 'Noto Sans KR', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 10px;
+  --code-font-size: 0.83rem; --code-line-height: 1.6;
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
-       background: #0d1117; color: #c9d1d9; line-height: 1.6; }
+body { font-family: var(--font-ui);
+       background: var(--bg-base); color: var(--text-primary); line-height: 1.6; }
 .container { max-width: 900px; margin: 0 auto; padding: 20px; }
-h1 { color: #58a6ff; margin-bottom: 5px; font-size: 1.3em; }
-.subtitle { color: #8b949e; font-size: 0.85em; margin-bottom: 20px; }
-.separator { border: none; border-top: 1px solid #21262d; margin: 15px 0; }
-.footer { color: #484f58; font-size: 0.75em; margin-top: 25px; text-align: center; }
+h1 { color: var(--accent-blue); margin-bottom: 5px; font-size: 1.3em; }
+.subtitle { color: var(--text-secondary); font-size: var(--text-sm); margin-bottom: 20px; }
+.separator { border: none; border-top: 1px solid var(--border-muted); margin: 15px 0; }
+.footer { color: var(--text-muted); font-size: var(--text-xs); margin-top: 25px; text-align: center; }
 
 /* Header row */
 .header-row { display: flex; align-items: center; justify-content: space-between; }
 .header-btns { display: flex; gap: 8px; }
-.clear-btn { background: transparent; border: 1px solid #da3633; color: #da3633;
-             padding: 5px 12px; border-radius: 6px; font-size: 0.8em; cursor: pointer;
-             transition: background 0.2s, color 0.2s; }
-.clear-btn:hover { background: #da3633; color: #fff; }
-.rollback-btn { background: transparent; border: 1px solid #d29922; color: #d29922;
-                padding: 5px 12px; border-radius: 6px; font-size: 0.8em; cursor: pointer;
-                transition: background 0.2s, color 0.2s; }
-.rollback-btn:hover { background: #d29922; color: #fff; }
+
+/* Unified button system */
+.outline-btn { background: transparent; padding: 5px 12px; border-radius: var(--radius-md);
+  font-size: var(--text-xs); cursor: pointer; transition: background 0.15s ease, color 0.15s ease;
+  text-decoration: none; white-space: nowrap; border: 1px solid currentColor; }
+.outline-btn--danger { color: var(--color-del); }
+.outline-btn--warn { color: var(--color-warn); }
+.outline-btn--primary { color: var(--accent-blue); }
+.outline-btn--danger:hover { background: var(--color-del); color: #fff; }
+.outline-btn--warn:hover { background: var(--color-warn); color: #fff; }
+.outline-btn--primary:hover { background: var(--accent-blue); color: #fff; }
+
+/* Backward compat aliases */
+.clear-btn { background: transparent; border: 1px solid var(--color-del); color: var(--color-del);
+             padding: 5px 12px; border-radius: var(--radius-md); font-size: var(--text-xs); cursor: pointer;
+             transition: background 0.15s ease, color 0.15s ease; }
+.clear-btn:hover { background: var(--color-del); color: #fff; }
+.rollback-btn { background: transparent; border: 1px solid var(--color-warn); color: var(--color-warn);
+                padding: 5px 12px; border-radius: var(--radius-md); font-size: var(--text-xs); cursor: pointer;
+                transition: background 0.15s ease, color 0.15s ease; }
+.rollback-btn:hover { background: var(--color-warn); color: #fff; }
 
 /* Collapsible date group (outer) */
 details.date-group { margin-bottom: 14px; }
-details.date-group > summary { cursor: pointer; color: #58a6ff; font-size: 0.9em;
-    padding: 6px 8px; border-radius: 6px; list-style: none; user-select: none; font-weight: 500; }
+details.date-group > summary { cursor: pointer; color: var(--accent-blue); font-size: 0.9em;
+    padding: 6px 8px; border-radius: var(--radius-md); list-style: none; user-select: none; font-weight: 500; }
 details.date-group > summary::-webkit-details-marker { display: none; }
 details.date-group > summary::before { content: '\\25B6 '; font-size: 0.7em; margin-right: 6px;
     display: inline-block; transition: transform 0.2s; }
 details.date-group[open] > summary::before { transform: rotate(90deg); }
-details.date-group > summary:hover { background: #161b22; }
+details.date-group > summary:hover { background: var(--bg-raised); }
 
 /* Collapsible directory group (inner) */
 details.dir-group { margin: 4px 0 8px 12px; }
-details.dir-group > summary { cursor: pointer; color: #8b949e; font-size: 0.82em;
-    padding: 4px 6px; border-radius: 4px; list-style: none; user-select: none; }
+details.dir-group > summary { cursor: pointer; color: var(--text-secondary); font-size: 0.82em;
+    padding: 4px 6px; border-radius: var(--radius-sm); list-style: none; user-select: none; }
 details.dir-group > summary::-webkit-details-marker { display: none; }
 details.dir-group > summary::before { content: '\\25B6 '; font-size: 0.6em; margin-right: 5px;
     display: inline-block; transition: transform 0.2s; }
 details.dir-group[open] > summary::before { transform: rotate(90deg); }
-details.dir-group > summary:hover { background: #161b22; }
+details.dir-group > summary:hover { background: var(--bg-raised); }
 
 /* File row */
 .file-row { display: flex; align-items: center; padding: 8px 12px;
-            border: 1px solid #21262d; border-radius: 6px; margin: 3px 0 0 0;
-            background: #161b22; transition: border-color 0.2s; cursor: pointer; }
-.file-row:hover { border-color: #58a6ff; }
+            border: 1px solid var(--border-muted); border-radius: var(--radius-md); margin: 3px 0 0 0;
+            background: var(--bg-raised); transition: border-color 0.2s, background 0.2s; cursor: pointer; }
+.file-row:hover { border-color: var(--accent-blue); background: #1a2030; }
+@media (hover: none) { .file-row:active { background: #1e2740; transform: scale(0.99); } }
 .file-icon { margin-right: 10px; font-size: 1.1em; flex-shrink: 0; }
-.file-name { flex: 1; color: #c9d1d9; font-weight: 500; }
-.file-ts { color: #7d8590; font-size: 0.75em; margin-right: 12px; white-space: nowrap; }
-.file-size { color: #8b949e; font-size: 0.8em; margin-right: 12px; white-space: nowrap; }
-.download-btn { color: #58a6ff; text-decoration: none; font-size: 1.1em; padding: 4px;
+.file-name { flex: 1; color: var(--text-primary); font-weight: 500; }
+.file-ts { color: #7d8590; font-size: var(--text-xs); margin-right: 12px; white-space: nowrap; }
+.file-size { color: var(--text-secondary); font-size: 0.8em; margin-right: 12px; white-space: nowrap; }
+.download-btn { color: var(--accent-blue); text-decoration: none; font-size: 1.1em; padding: 4px;
                 flex-shrink: 0; }
-.download-btn:hover { color: #79c0ff; }
+.download-btn:hover { color: var(--accent-blue-hover); }
 
 /* History dropdown */
 .history-dropdown { display: none; margin: 0 0 6px 32px; padding: 6px 0;
-                    border: 1px solid #21262d; border-radius: 6px; background: #0d1117; }
-.history-dropdown.open { display: block; }
+                    border: 1px solid var(--border-muted); border-radius: var(--radius-md); background: var(--bg-base); }
+.history-dropdown.open { display: block; animation: slide-down 0.15s ease; }
 .history-item { display: flex; align-items: center; padding: 5px 14px; gap: 10px; }
-.history-item a { color: #58a6ff; text-decoration: none; font-size: 0.82em; }
-.history-item a:hover { color: #79c0ff; text-decoration: underline; }
-.history-item .snap-badge { color: #3fb950; font-size: 0.7em; }
-.history-item .no-snap { color: #484f58; font-size: 0.7em; }
-.history-item .op-write { color: #3fb950; font-size: 0.7em; font-weight: 500; }
-.history-item .op-edit { color: #d29922; font-size: 0.7em; font-weight: 500; }
-.history-item .op-delete { color: #f85149; font-size: 0.7em; font-weight: 500; }
-.history-item .op-rollback { color: #a371f7; font-size: 0.7em; font-weight: 500; }
+.history-item a { color: var(--accent-blue); text-decoration: none; font-size: 0.82em; }
+.history-item a:hover { color: var(--accent-blue-hover); text-decoration: underline; }
+.history-item .snap-badge { color: var(--color-add); font-size: 0.7em; }
+.history-item .no-snap { color: var(--text-muted); font-size: 0.7em; }
+.history-item .op-write { color: var(--color-add); font-size: 0.7em; font-weight: 500; }
+.history-item .op-edit { color: var(--color-warn); font-size: 0.7em; font-weight: 500; }
+.history-item .op-delete { color: var(--color-del); font-size: 0.7em; font-weight: 500; }
+.history-item .op-rollback { color: var(--color-special); font-size: 0.7em; font-weight: 500; }
 .hist-action { font-size: 0.7em; }
 .hist-action a { font-size: 1em; }
 
 /* Deleted file row */
-.file-row.deleted { opacity: 0.6; border-color: #da363380; }
-.file-row.deleted .file-name { text-decoration: line-through; color: #f85149; }
-.file-row.deleted .file-ts { color: #f8514980; }
-.history-header { color: #8b949e; font-size: 0.75em; padding: 4px 14px; border-bottom: 1px solid #21262d;
+.file-row.deleted { opacity: 0.6; border-color: rgba(248,81,73,0.5); }
+.file-row.deleted .file-name { text-decoration: line-through; color: var(--color-del); }
+.file-row.deleted .file-ts { color: rgba(248,81,73,0.5); }
+.history-header { color: var(--text-secondary); font-size: var(--text-xs); padding: 4px 14px; border-bottom: 1px solid var(--border-muted);
                   margin-bottom: 4px; }
 
 /* View page */
 .topbar { display: flex; align-items: center; gap: 15px; margin-bottom: 15px; flex-wrap: wrap; }
-.topbar a { color: #58a6ff; text-decoration: none; font-size: 0.9em; }
-.topbar .fname { flex: 1; color: #c9d1d9; font-weight: bold; }
-pre.code { background: #161b22; border: 1px solid #21262d; border-radius: 6px;
-           padding: 16px; overflow-x: auto; font-size: 0.85em; line-height: 1.5;
-           white-space: pre; }
-.line-num { color: #484f58; display: inline-block; width: 45px; text-align: right;
+.topbar a { color: var(--accent-blue); text-decoration: none; font-size: 0.9em; }
+.topbar .fname { flex: 1; color: var(--text-primary); font-weight: bold; }
+pre.code { background: var(--bg-raised); border: 1px solid var(--border-muted); border-radius: var(--radius-md);
+           padding: 16px; overflow-x: auto; font-size: var(--text-sm); line-height: 1.5;
+           white-space: pre; font-family: var(--font-mono); }
+.line-num { color: var(--text-muted); display: inline-block; width: 45px; text-align: right;
             margin-right: 16px; user-select: none; }
-.img-preview { max-width: 100%; border: 1px solid #21262d; border-radius: 6px;
+.img-preview { max-width: 100%; border: 1px solid var(--border-muted); border-radius: var(--radius-md);
                margin: 15px 0; }
-.no-preview { color: #8b949e; padding: 40px; text-align: center;
-              border: 1px dashed #21262d; border-radius: 6px; margin: 15px 0; }
-.snap-label { color: #3fb950; font-size: 0.8em; margin-left: 10px; }
+.no-preview { color: var(--text-secondary); padding: 40px; text-align: center;
+              border: 1px dashed var(--border-muted); border-radius: var(--radius-md); margin: 15px 0; }
+.snap-label { color: var(--color-add); font-size: 0.8em; margin-left: 10px; }
 
 /* VS Code-style side-by-side diff */
 .diff-page { max-width: 1400px; }
 .diff-meta { display: flex; align-items: center; justify-content: space-between;
-             padding: 10px 16px; background: #1c2128; border: 1px solid #30363d;
-             border-radius: 8px; margin-bottom: 12px; }
-.diff-stats { font-size: 0.85em; white-space: nowrap; display: flex; gap: 12px; }
-.diff-stats .add-count { color: #3fb950; font-weight: 600; }
-.diff-stats .del-count { color: #f85149; font-weight: 600; }
-.diff-fheader { display: flex; border: 1px solid #30363d; border-bottom: none;
-                border-radius: 8px 8px 0 0; overflow: hidden; }
-.diff-fheader div { flex: 1; padding: 10px 16px; font-size: 0.82em; background: #1c2128;
-                    color: #8b949e; font-family: 'Consolas','Monaco','Courier New',monospace; }
-.diff-fheader div:first-child { border-right: 1px solid #30363d; }
-.diff-fheader .fh-old::before { content: '\2212 '; color: #f85149; font-weight: 700; }
-.diff-fheader .fh-new::before { content: '+ '; color: #3fb950; font-weight: 700; }
+             padding: 10px 16px; background: var(--bg-overlay); border: 1px solid var(--border-default);
+             border-radius: var(--radius-lg); margin-bottom: 12px; }
+.diff-stats { font-size: var(--text-sm); white-space: nowrap; display: flex; gap: 12px; }
+.diff-stats .add-count { color: var(--color-add); font-weight: 600; }
+.diff-stats .del-count { color: var(--color-del); font-weight: 600; }
+.diff-fheader { display: flex; border: 1px solid var(--border-default); border-bottom: none;
+                border-radius: var(--radius-lg) var(--radius-lg) 0 0; overflow: hidden; }
+.diff-fheader div { flex: 1; padding: 10px 16px; font-size: 0.82em; background: var(--bg-overlay);
+                    color: var(--text-secondary); font-family: var(--font-mono); }
+.diff-fheader div:first-child { border-right: 1px solid var(--border-default); }
+.diff-fheader .fh-old::before { content: '\2212 '; color: var(--color-del); font-weight: 700; }
+.diff-fheader .fh-new::before { content: '+ '; color: var(--color-add); font-weight: 700; }
 .diff-fheader .fh-old { color: #f0a8a8; }
 .diff-fheader .fh-new { color: #a8f0c0; }
-.diff-wrap { width: 100%; overflow-x: auto; border: 1px solid #30363d;
-             border-top: none; border-radius: 0 0 8px 8px; background: #0d1117; }
+.diff-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--border-default);
+             border-top: none; border-radius: 0 0 var(--radius-lg) var(--radius-lg); background: var(--bg-base); }
 .diff-table { width: 100%; border-collapse: collapse; table-layout: fixed;
-              font-family: 'Consolas','Monaco','Courier New',monospace;
+              font-family: var(--font-mono);
               font-size: 0.82em; line-height: 1.7; }
 .diff-table col.ln { width: 52px; }
 .diff-table col.mk { width: 20px; }
@@ -348,31 +380,31 @@ pre.code { background: #161b22; border: 1px solid #21262d; border-radius: 6px;
                  overflow: hidden; text-overflow: ellipsis; }
 .diff-table .ln { text-align: right; padding-right: 8px; color: rgba(139,148,158,0.5);
                   user-select: none; font-size: 0.9em; background: rgba(13,17,23,0.6);
-                  border-right: 1px solid #21262d; }
+                  border-right: 1px solid var(--border-muted); }
 .diff-table .mk { text-align: center; color: rgba(139,148,158,0.4);
                    user-select: none; font-size: 0.85em; width: 20px; }
-.diff-table .code { padding: 0 16px; color: #c9d1d9; }
-.diff-table .gt { background: #30363d; padding: 0; }
+.diff-table .code { padding: 0 16px; color: var(--text-primary); }
+.diff-table .gt { background: var(--border-default); padding: 0; }
 /* Delete line (left) */
 .diff-table .dl { background: rgba(248,81,73,0.13); }
 .diff-table td.dl.ln { background: rgba(248,81,73,0.10); color: rgba(248,81,73,0.7); }
-.diff-table td.dl.mk { background: rgba(248,81,73,0.13); color: #f85149; }
+.diff-table td.dl.mk { background: rgba(248,81,73,0.13); color: var(--color-del); }
 .diff-table td.dl.code { color: #e6b0aa; }
 /* Add line (right) */
 .diff-table .al { background: rgba(63,185,80,0.13); }
 .diff-table td.al.ln { background: rgba(63,185,80,0.10); color: rgba(63,185,80,0.7); }
-.diff-table td.al.mk { background: rgba(63,185,80,0.13); color: #3fb950; }
+.diff-table td.al.mk { background: rgba(63,185,80,0.13); color: var(--color-add); }
 .diff-table td.al.code { color: #a8e6b0; }
 /* Empty placeholder */
-.diff-table td.el { background: #161b22; }
-.diff-table td.el.ln { background: rgba(22,27,34,0.8); border-right-color: #1c2128; }
+.diff-table td.el { background: var(--bg-raised); }
+.diff-table td.el.ln { background: rgba(22,27,34,0.8); border-right-color: var(--bg-overlay); }
 /* Word-level highlights */
-.diff-table .wd { background: rgba(248,81,73,0.4); border-radius: 3px; padding: 1px 2px; }
-.diff-table .wa { background: rgba(63,185,80,0.4); border-radius: 3px; padding: 1px 2px; }
+.diff-table .wd { background: rgba(248,81,73,0.4); border-radius: var(--radius-sm); padding: 1px 2px; }
+.diff-table .wa { background: rgba(63,185,80,0.4); border-radius: var(--radius-sm); padding: 1px 2px; }
 /* Fold separator */
-.diff-table .fold-row td { background: #1c2128; height: 32px; text-align: center;
-                           color: #58a6ff; font-size: 0.78em; letter-spacing: 0.5px;
-                           border-top: 1px solid #21262d; border-bottom: 1px solid #21262d; }
+.diff-table .fold-row td { background: var(--bg-overlay); height: 32px; text-align: center;
+                           color: var(--accent-blue); font-size: 0.78em; letter-spacing: 0.5px;
+                           border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted); }
 .diff-table .fold-row td .fold-icon { margin-right: 6px; }
 @media (max-width: 768px) {
   .diff-page { max-width: 100%; padding: 8px; }
@@ -384,95 +416,166 @@ pre.code { background: #161b22; border: 1px solid #21262d; border-radius: 6px;
 }
 
 /* Rollback */
-.rb-confirm { background: #161b22; border: 1px solid #21262d; border-radius: 6px;
+.rb-confirm { background: var(--bg-raised); border: 1px solid var(--border-muted); border-radius: var(--radius-md);
               padding: 20px; margin: 15px 0; }
-.rb-confirm h3 { color: #d29922; margin-bottom: 12px; font-size: 1em; }
-.rb-info { color: #8b949e; font-size: 0.85em; margin-bottom: 6px; }
+.rb-confirm h3 { color: var(--color-warn); margin-bottom: 12px; font-size: 1em; }
+.rb-info { color: var(--text-secondary); font-size: var(--text-sm); margin-bottom: 6px; }
 .rb-btns { display: flex; gap: 10px; margin-top: 16px; }
-.rb-btns .btn-rollback { background: #d29922; color: #fff; border: none; padding: 8px 20px;
-                         border-radius: 6px; cursor: pointer; font-size: 0.85em; }
+.rb-btns .btn-rollback { background: var(--color-warn); color: #fff; border: none; padding: 8px 20px;
+                         border-radius: var(--radius-md); cursor: pointer; font-size: var(--text-sm); }
 .rb-btns .btn-rollback:hover { background: #e3b341; }
-.rb-btns .btn-cancel { background: transparent; border: 1px solid #30363d; color: #8b949e;
-                       padding: 8px 20px; border-radius: 6px; cursor: pointer; font-size: 0.85em; }
-.rb-btns .btn-cancel:hover { background: #21262d; }
+.rb-btns .btn-cancel { background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+                       padding: 8px 20px; border-radius: var(--radius-md); cursor: pointer; font-size: var(--text-sm); }
+.rb-btns .btn-cancel:hover { background: var(--border-muted); }
 
 /* Toolbar: search + sort + lang + diff button */
 .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
-.toolbar input[type="text"] { flex: 1; min-width: 120px; background: #161b22; border: 1px solid #30363d;
-    color: #c9d1d9; padding: 6px 12px; border-radius: 6px; font-size: 0.85em; outline: none; }
-.toolbar input[type="text"]:focus { border-color: #58a6ff; }
-.toolbar input[type="text"]::placeholder { color: #484f58; }
-.toolbar select { background: #161b22; border: 1px solid #30363d; color: #8b949e; padding: 6px 8px;
-    border-radius: 6px; font-size: 0.8em; cursor: pointer; outline: none; }
-.toolbar select:focus { border-color: #58a6ff; }
-.diff-tool-btn { background: transparent; border: 1px solid #58a6ff; color: #58a6ff;
-    padding: 5px 12px; border-radius: 6px; font-size: 0.8em; cursor: pointer;
-    transition: background 0.2s, color 0.2s; text-decoration: none; white-space: nowrap; }
-.diff-tool-btn:hover { background: #58a6ff; color: #fff; }
+.toolbar input[type="text"] { flex: 1; min-width: 120px; background: var(--bg-raised); border: 1px solid var(--border-default);
+    color: var(--text-primary); padding: 6px 12px; border-radius: var(--radius-md); font-size: var(--text-sm); outline: none; }
+.toolbar input[type="text"]:focus { border-color: var(--accent-blue); box-shadow: 0 0 0 3px rgba(88,166,255,0.1); }
+.toolbar input[type="text"]::placeholder { color: var(--text-muted); }
+.toolbar select { background: var(--bg-raised); border: 1px solid var(--border-default); color: var(--text-secondary);
+    padding: 6px 8px; border-radius: var(--radius-md); font-size: 0.8em; cursor: pointer; outline: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238b949e' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center; padding-right: 24px; }
+.toolbar select:focus { border-color: var(--accent-blue); }
+.diff-tool-btn { background: transparent; border: 1px solid var(--accent-blue); color: var(--accent-blue);
+    padding: 5px 12px; border-radius: var(--radius-md); font-size: 0.8em; cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease; text-decoration: none; white-space: nowrap; }
+.diff-tool-btn:hover { background: var(--accent-blue); color: #fff; }
 
-/* Code view: highlight.js + line numbers */
-.code-wrap { position: relative; border: 1px solid #21262d; border-radius: 6px;
+/* Code view: highlight.js + line numbers + copy button */
+.code-wrap { position: relative; border: 1px solid var(--border-muted); border-radius: var(--radius-md);
              overflow: hidden; margin: 15px 0; }
-.code-wrap .copy-btn { position: absolute; top: 8px; right: 8px; background: #21262d;
-    border: 1px solid #30363d; color: #8b949e; padding: 4px 10px; border-radius: 4px;
-    font-size: 0.75em; cursor: pointer; z-index: 2; transition: background 0.2s, color 0.2s; }
-.code-wrap .copy-btn:hover { background: #30363d; color: #c9d1d9; }
-.code-wrap .copy-btn.ok { background: #238636; color: #fff; border-color: #238636; }
+.code-wrap .copy-btn { position: absolute; top: 8px; right: 8px; background: var(--border-muted);
+    border: 1px solid var(--border-default); color: var(--text-secondary); padding: 4px 10px; border-radius: var(--radius-sm);
+    font-size: var(--text-xs); cursor: pointer; z-index: 2; transition: background 0.2s, color 0.2s; }
+.code-wrap .copy-btn:hover { background: var(--border-default); color: var(--text-primary); }
+.code-wrap .copy-btn.ok { background: #238636; color: #fff; border-color: #238636; animation: copy-success 0.2s ease; }
 .code-container { display: flex; overflow-x: auto; }
-.code-container .line-nums { padding: 16px 0; background: #0d1117; border-right: 1px solid #21262d;
+.code-container .line-nums { padding: 16px 0; background: var(--bg-base); border-right: 1px solid var(--border-muted);
     user-select: none; flex-shrink: 0; text-align: right; }
-.code-container .line-nums span { display: block; padding: 0 12px 0 16px; color: #484f58;
-    font-family: 'Consolas','Monaco','Courier New',monospace; font-size: 0.82em; line-height: 1.55; }
-.code-container pre { flex: 1; margin: 0; padding: 16px; background: #161b22; overflow-x: visible; }
-.code-container pre code { font-size: 0.85em; line-height: 1.55; background: transparent !important;
+.code-container .line-nums span { display: block; padding: 0 12px 0 16px; color: var(--text-muted);
+    font-family: var(--font-mono); font-size: var(--code-font-size); line-height: var(--code-line-height); }
+.code-container pre { flex: 1; margin: 0; padding: 16px; background: var(--bg-raised); overflow-x: visible; }
+.code-container pre code { font-size: var(--code-font-size); line-height: var(--code-line-height); background: transparent !important;
     padding: 0 !important; }
 
 /* Diff tool page */
-.dt-panel { background: #161b22; border: 1px solid #21262d; border-radius: 8px;
+.dt-panel { background: var(--bg-raised); border: 1px solid var(--border-muted); border-radius: var(--radius-lg);
             padding: 20px; margin-bottom: 16px; }
-.dt-panel label { color: #8b949e; font-size: 0.85em; display: block; margin-bottom: 6px; }
-.dt-panel select { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
-    padding: 8px 12px; border-radius: 6px; font-size: 0.85em; outline: none; cursor: pointer; }
-.dt-panel select:focus { border-color: #58a6ff; }
+.dt-panel label { color: var(--text-secondary); font-size: var(--text-sm); display: block; margin-bottom: 6px; }
+.dt-panel select { width: 100%; background: var(--bg-base); border: 1px solid var(--border-default); color: var(--text-primary);
+    padding: 8px 12px; border-radius: var(--radius-md); font-size: var(--text-sm); outline: none; cursor: pointer; }
+.dt-panel select:focus { border-color: var(--accent-blue); }
 .dt-panel select:disabled { opacity: 0.4; cursor: not-allowed; }
-.dt-snap-row { display: flex; gap: 16px; margin-top: 12px; }
-.dt-snap-row > div { flex: 1; }
-.dt-info { color: #3fb950; font-size: 0.78em; margin-top: 6px; text-align: center; }
-.dt-hint { color: #484f58; font-size: 0.82em; }
+.dt-snap-row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; margin-top: 12px; }
+.dt-snap-divider { color: var(--text-muted); font-size: 1.2em; display: flex;
+  align-items: center; justify-content: center; user-select: none; padding-top: 20px; }
+.dt-snap-row > div:first-child label { color: rgba(248,81,73,0.8); }
+.dt-snap-row > div:last-child label { color: rgba(63,185,80,0.8); }
+.dt-info { color: var(--color-add); font-size: 0.78em; margin-top: 6px; text-align: center; }
+.dt-hint { color: var(--text-muted); font-size: 0.82em; }
 .dt-result { margin-top: 16px; }
 
 /* Language selector */
-.lang-sel { background: #161b22; border: 1px solid #30363d; color: #8b949e; padding: 4px 6px;
-    border-radius: 4px; font-size: 0.75em; cursor: pointer; outline: none; }
-.lang-sel:focus { border-color: #58a6ff; }
+.lang-sel { background: var(--bg-raised); border: 1px solid var(--border-default); color: var(--text-secondary); padding: 4px 6px;
+    border-radius: var(--radius-sm); font-size: var(--text-xs); cursor: pointer; outline: none; }
+.lang-sel:focus { border-color: var(--accent-blue); }
 
 /* Cycle rollback modal */
 .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                 background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: center; }
-.modal-overlay.open { display: flex; }
-.modal { background: #161b22; border: 1px solid #30363d; border-radius: 10px;
-         max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; padding: 24px; }
-.modal h2 { color: #d29922; font-size: 1.1em; margin-bottom: 16px; }
+                 background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: center;
+                 opacity: 0; transition: opacity 0.2s ease; }
+.modal-overlay.open { display: flex; opacity: 1; }
+.modal { background: var(--bg-raised); border: 1px solid var(--border-default); border-radius: var(--radius-xl);
+         max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; padding: var(--space-6);
+         transform: translateY(20px); transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.modal-overlay.open .modal { transform: translateY(0); }
+.modal::before { content: ''; display: block; width: 40px; height: 4px;
+  background: var(--border-default); border-radius: 2px; margin: 0 auto var(--space-4); }
+.modal h2 { color: var(--color-warn); font-size: 1.1em; margin-bottom: 16px; }
 .cycle-item { display: flex; align-items: center; padding: 10px 14px; margin: 4px 0;
-              border: 1px solid #21262d; border-radius: 6px; cursor: pointer;
+              border: 1px solid var(--border-muted); border-radius: var(--radius-md); cursor: pointer;
               transition: border-color 0.2s, background 0.2s; }
-.cycle-item:hover { border-color: #d29922; background: #1c1a15; }
+.cycle-item:hover { border-color: var(--color-warn); background: #1c1a15; }
 .cycle-info { flex: 1; }
-.cycle-id { color: #d29922; font-weight: 500; font-size: 0.85em; }
-.cycle-label { color: #c9d1d9; font-size: 0.82em; margin-top: 3px;
+.cycle-id { color: var(--color-warn); font-weight: 500; font-size: var(--text-sm); }
+.cycle-label { color: var(--text-primary); font-size: 0.82em; margin-top: 3px;
                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 500px; }
-.cycle-ts { color: #8b949e; font-size: 0.78em; margin-top: 2px; }
-.cycle-files { color: #8b949e; font-size: 0.75em; margin-top: 2px; }
-.modal-close { background: transparent; border: 1px solid #30363d; color: #8b949e;
-               padding: 6px 16px; border-radius: 6px; cursor: pointer; margin-top: 12px; }
-.modal-close:hover { background: #21262d; }
+.cycle-ts { color: var(--text-secondary); font-size: 0.78em; margin-top: 2px; }
+.cycle-files { color: var(--text-secondary); font-size: var(--text-xs); margin-top: 2px; }
+.modal-close { background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+               padding: 6px 16px; border-radius: var(--radius-md); cursor: pointer; margin-top: 12px; }
+.modal-close:hover { background: var(--border-muted); }
+
+/* Modal responsive */
+@media (min-width: 600px) { .modal::before { display: none; }
+  .modal-overlay { align-items: center; }
+  .modal { border-radius: var(--radius-xl); width: 90%; } }
+@media (max-width: 599px) {
+  .modal-overlay { align-items: flex-end; }
+  .modal { border-radius: var(--radius-xl) var(--radius-xl) 0 0; width: 100%; max-width: 100%; } }
+
+/* Animations */
+@keyframes slide-down { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes copy-success { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+
+/* Toast */
+.toast-box { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--bg-overlay); border: 1px solid var(--border-default); border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4); min-width: 280px; max-width: 90vw; z-index: 200;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5); animation: toast-up 0.2s ease;
+  display: flex; flex-direction: column; gap: var(--space-2); }
+@keyframes toast-up { from { transform: translateX(-50%) translateY(10px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; } }
+.toast-msg { font-size: var(--text-sm); color: var(--text-primary); }
+.toast-btns { display: flex; gap: var(--space-2); justify-content: flex-end; }
+.toast-ok { background: var(--color-warn); color: #fff; border: none; padding: 6px 16px;
+  border-radius: var(--radius-md); cursor: pointer; font-size: var(--text-xs); }
+.toast-cancel { background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary);
+  padding: 6px 16px; border-radius: var(--radius-md); cursor: pointer; font-size: var(--text-xs); }
+.toast-ok:hover { background: var(--color-warn); filter: brightness(1.2); }
+.toast-info { border-color: var(--accent-blue); }
+.toast-ok-type { border-color: var(--color-add); }
+
+/* Empty / error state boxes */
+.state-box { padding: var(--space-5) var(--space-4); text-align: center;
+  border-radius: var(--radius-lg); margin: var(--space-4) 0; }
+.state-box--empty { border: 1px dashed var(--border-muted); color: var(--text-muted); }
+.state-box--deleted { border: 1px dashed rgba(248,81,73,0.3); background: rgba(248,81,73,0.05); }
+.state-box .state-icon { font-size: 2em; display: block; margin-bottom: var(--space-2); line-height: 1; }
+.state-box .state-title { font-size: var(--text-base); color: var(--text-primary); margin-bottom: var(--space-1); }
+.state-box .state-desc { font-size: var(--text-sm); color: var(--text-secondary); }
+
+/* Focus styles */
+details > summary:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; border-radius: var(--radius-md); }
+
+/* Mobile responsive */
+@media (max-width: 600px) {
+  .file-row { flex-wrap: wrap; gap: var(--space-1); padding: 10px 12px; }
+  .file-name { width: calc(100% - 40px); flex: none; }
+  .file-ts, .file-size { font-size: 0.72rem; margin-right: 8px; }
+  .download-btn { padding: 8px; margin-left: auto; }
+  .history-item { padding: 10px 14px; gap: 12px; }
+  .history-item a { font-size: 0.85em; min-height: 24px; display: inline-flex; align-items: center; }
+  .hist-action { display: flex; gap: 8px; align-items: center; }
+  .header-row { flex-direction: column; align-items: stretch; }
+  .header-btns { justify-content: flex-start; }
+  .clear-btn, .outline-btn--danger { margin-left: auto; }
+  .diff-wrap { -webkit-overflow-scrolling: touch; }
+  .diff-table { min-width: 500px; font-size: 0.68em; line-height: 1.4; }
+  .dt-snap-row { grid-template-columns: 1fr; gap: var(--space-2); }
+  .dt-snap-divider { display: none; }
+}
 """
 
 _JS = ("""
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
 <script>
 var VI18N=""" + _VIEWER_I18N_JSON + """;
+
 var _lang=localStorage.getItem('fv_lang')||'ko';
 function T(k){return (VI18N[_lang]||VI18N.ko)[k]||k;}
 function applyI18n(){
@@ -499,6 +602,21 @@ function applyI18n(){
 function switchLang(lang){
   _lang=lang;localStorage.setItem('fv_lang',lang);applyI18n();
 }
+// Toast notification (replaces confirm/alert)
+function showToast(msg, type, onConfirm) {
+  var old = document.querySelector('.toast-box'); if(old) old.remove();
+  var t = document.createElement('div'); t.className = 'toast-box toast-' + (type||'info');
+  if(onConfirm) {
+    t.innerHTML = '<span class="toast-msg">' + msg + '</span><div class="toast-btns">' +
+      '<button class="toast-cancel" onclick="this.closest(\\'.toast-box\\').remove()">' + T('cancel') + '</button>' +
+      '<button class="toast-ok">OK</button></div>';
+    t.querySelector('.toast-ok').onclick = function(){ t.remove(); onConfirm(); };
+  } else {
+    t.innerHTML = '<span class="toast-msg">' + msg + '</span>';
+    setTimeout(function(){ t.remove(); }, 3000);
+  }
+  document.body.appendChild(t);
+}
 // Existing functions
 function toggleHistory(btn, id) {
   var el = document.getElementById(id);
@@ -507,18 +625,20 @@ function toggleHistory(btn, id) {
   el.classList.toggle('open');
 }
 function clearHistory(url) {
-  if (!confirm(T('cfm_clear'))) return;
-  fetch(url, {method:'POST'}).then(function(r){
-    if (r.ok) location.reload();
-    else alert(T('req_fail'));
-  }).catch(function(){alert(T('req_fail'));});
+  showToast(T('cfm_clear'), 'warn', function(){
+    fetch(url, {method:'POST'}).then(function(r){
+      if (r.ok) location.reload();
+      else showToast(T('req_fail'), 'info');
+    }).catch(function(){showToast(T('req_fail'), 'info');});
+  });
 }
 function doRollbackFile(url) {
-  if (!confirm(T('cfm_rb'))) return;
-  fetch(url, {method:'POST'}).then(function(r){
-    if (r.ok) { alert(T('rb_done')); location.reload(); }
-    else r.text().then(function(t){alert(T('failed') + t);});
-  }).catch(function(){alert(T('req_fail'));});
+  showToast(T('cfm_rb'), 'warn', function(){
+    fetch(url, {method:'POST'}).then(function(r){
+      if (r.ok) { showToast(T('rb_done'), 'ok'); setTimeout(function(){location.reload();},800); }
+      else r.text().then(function(t){showToast(T('failed') + t, 'info');});
+    }).catch(function(){showToast(T('req_fail'), 'info');});
+  });
 }
 function showCycleModal() {
   document.getElementById('cycle-modal').classList.add('open');
@@ -527,11 +647,15 @@ function closeCycleModal() {
   document.getElementById('cycle-modal').classList.remove('open');
 }
 function doRollbackCycle(url) {
-  if (!confirm(T('cfm_cycle'))) return;
-  fetch(url, {method:'POST'}).then(function(r){
-    if (r.ok) { alert(T('cycle_done')); location.reload(); }
-    else r.text().then(function(t){alert(T('failed') + t);});
-  }).catch(function(){alert(T('req_fail'));});
+  showToast(T('cfm_cycle'), 'warn', function(){
+    fetch(url, {method:'POST'}).then(function(r){
+      if(r.ok) return r.text().then(function(t){
+        if(t==='SAME_STATE'){showToast(T('same_state'),'info');}
+        else{showToast(T('cycle_done'),'ok');setTimeout(function(){location.reload();},800);}
+      });
+      else r.text().then(function(t){showToast(T('failed') + t, 'info');});
+    }).catch(function(){showToast(T('req_fail'), 'info');});
+  });
 }
 // Copy code
 function copyCode(btn){
@@ -566,7 +690,7 @@ function filterFiles(q){
 }
 // Sort files
 function sortFiles(by){
-  var container=document.getElementById('file-list-container');
+  var container=document.getElementById('grouped-file-list');
   if(!container)return;
   var entries=Array.from(container.querySelectorAll('.file-entry'));
   entries.sort(function(a,b){
@@ -594,6 +718,7 @@ function sortFiles(by){
 }
 // Highlight.js init
 function initHL(){
+  if(typeof hljs==='undefined')return;
   document.querySelectorAll('pre code[class*="language-"]').forEach(function(b){
     hljs.highlightElement(b);
   });
@@ -635,8 +760,11 @@ function dtSnapChange(token){
     result.innerHTML='<div class="no-preview">'+T('req_fail')+'</div>';
   });
 }
-document.addEventListener('DOMContentLoaded',function(){initHL();applyI18n();});
+document.addEventListener('DOMContentLoaded',function(){
+  initHL();applyI18n();
+});
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js" async onload="initHL()"></script>
 """)
 
 
@@ -667,7 +795,7 @@ def _get_cycles(entries):
     by_run = defaultdict(list)
     for e in entries:
         rid = e.get("run_id", 0)
-        if rid > 0:
+        if rid > 0 and e.get("op") != "rollback-backup":
             by_run[rid].append(e)
     cycles = []
     for rid, ents in sorted(by_run.items(), reverse=True):
@@ -793,13 +921,15 @@ def _page_list(entries, session_token):
                     if last_snap:
                         dl_btn = (
                             f'<a class="download-btn" href="/snapshot-dl/{session_token}/{last_snap}"'
-                            f' title="Download last snapshot" onclick="event.stopPropagation()">\u2b07</a>')
+                            f' title="Download last snapshot" aria-label="Download last snapshot"'
+                            f' onclick="event.stopPropagation()">\u2b07</a>')
                     else:
                         dl_btn = ""
                 else:
                     dl_btn = (
                         f'<a class="download-btn" href="/download/{session_token}/{idx}"'
-                        f' title="Download" onclick="event.stopPropagation()">\u2b07</a>')
+                        f' title="Download" aria-label="Download file"'
+                        f' onclick="event.stopPropagation()">\u2b07</a>')
                 file_rows.append(f'''
                 <div class="{row_cls} file-entry" data-fname="{html.escape(fname)}"
                      data-fpath="{html.escape(finfo['path'])}"
@@ -986,55 +1116,59 @@ def _word_highlight(old_line, new_line):
     return "".join(old_parts), "".join(new_parts)
 
 
-def _page_diff(old_name, old_text, new_name, new_text, session_token):
-    """Generate a VS Code-style side-by-side diff page."""
-    back_link = f'<a href="/list/{session_token}">\u2190 List</a>'
-    old_lines = old_text.splitlines()
-    new_lines = new_text.splitlines()
+def _diff_ctx_row(i, j, text):
+    """Shared diff table helper: context (unchanged) row."""
+    esc = html.escape(text)
+    return (f'<tr><td class="ln">{i}</td><td class="mk"></td><td class="code">{esc}</td>'
+            f'<td class="gt"></td>'
+            f'<td class="ln">{j}</td><td class="mk"></td><td class="code">{esc}</td></tr>')
 
+
+def _diff_del_row(i, text):
+    """Shared diff table helper: deleted line row."""
+    return (f'<tr><td class="ln dl">{i}</td><td class="mk dl">\u2212</td><td class="code dl">{text}</td>'
+            f'<td class="gt"></td>'
+            f'<td class="ln el"></td><td class="mk el"></td><td class="code el"></td></tr>')
+
+
+def _diff_add_row(j, text):
+    """Shared diff table helper: added line row."""
+    return (f'<tr><td class="ln el"></td><td class="mk el"></td><td class="code el"></td>'
+            f'<td class="gt"></td>'
+            f'<td class="ln al">{j}</td><td class="mk al">+</td><td class="code al">{text}</td></tr>')
+
+
+def _diff_replace_row(i, old_html, j, new_html):
+    """Shared diff table helper: replaced line row (side-by-side)."""
+    return (f'<tr><td class="ln dl">{i}</td><td class="mk dl">\u2212</td><td class="code dl">{old_html}</td>'
+            f'<td class="gt"></td>'
+            f'<td class="ln al">{j}</td><td class="mk al">+</td><td class="code al">{new_html}</td></tr>')
+
+
+def _make_diff_rows(old_lines, new_lines, context=3):
+    """Build diff table rows from two lists of lines. Returns (table_rows, add_count, del_count)."""
     sm = difflib.SequenceMatcher(None, old_lines, new_lines)
     table_rows = []
     add_count = 0
     del_count = 0
-    CONTEXT = 3
-
-    def _ctx_row(i, j, text):
-        esc = html.escape(text)
-        return (f'<tr><td class="ln">{i}</td><td class="mk"></td><td class="code">{esc}</td>'
-                f'<td class="gt"></td>'
-                f'<td class="ln">{j}</td><td class="mk"></td><td class="code">{esc}</td></tr>')
-
-    def _del_row(i, text):
-        return (f'<tr><td class="ln dl">{i}</td><td class="mk dl">\u2212</td><td class="code dl">{text}</td>'
-                f'<td class="gt"></td>'
-                f'<td class="ln el"></td><td class="mk el"></td><td class="code el"></td></tr>')
-
-    def _add_row(j, text):
-        return (f'<tr><td class="ln el"></td><td class="mk el"></td><td class="code el"></td>'
-                f'<td class="gt"></td>'
-                f'<td class="ln al">{j}</td><td class="mk al">+</td><td class="code al">{text}</td></tr>')
-
-    def _replace_row(i, old_html, j, new_html):
-        return (f'<tr><td class="ln dl">{i}</td><td class="mk dl">\u2212</td><td class="code dl">{old_html}</td>'
-                f'<td class="gt"></td>'
-                f'<td class="ln al">{j}</td><td class="mk al">+</td><td class="code al">{new_html}</td></tr>')
+    CONTEXT = context
 
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
             n = i2 - i1
             if n > CONTEXT * 2 + 1:
                 for k in range(CONTEXT):
-                    table_rows.append(_ctx_row(i1+k+1, j1+k+1, old_lines[i1+k]))
+                    table_rows.append(_diff_ctx_row(i1+k+1, j1+k+1, old_lines[i1+k]))
                 folded = n - CONTEXT * 2
                 table_rows.append(
                     f'<tr class="fold-row"><td colspan="3"></td><td class="gt"></td>'
                     f'<td colspan="3"><span class="fold-icon">\u2195</span>{folded} lines hidden</td></tr>')
                 for k in range(CONTEXT):
                     ii, jj = i2 - CONTEXT + k, j2 - CONTEXT + k
-                    table_rows.append(_ctx_row(ii+1, jj+1, old_lines[ii]))
+                    table_rows.append(_diff_ctx_row(ii+1, jj+1, old_lines[ii]))
             else:
                 for i, j in zip(range(i1, i2), range(j1, j2)):
-                    table_rows.append(_ctx_row(i+1, j+1, old_lines[i]))
+                    table_rows.append(_diff_ctx_row(i+1, j+1, old_lines[i]))
 
         elif tag == "replace":
             old_n = i2 - i1
@@ -1045,9 +1179,9 @@ def _page_diff(old_name, old_text, new_name, new_text, session_token):
             # for clearer visual alignment (avoids confusing N:1 pairing)
             if max(old_n, new_n) > 2 * min(old_n, new_n):
                 for i in range(i1, i2):
-                    table_rows.append(_del_row(i+1, html.escape(old_lines[i])))
+                    table_rows.append(_diff_del_row(i+1, html.escape(old_lines[i])))
                 for j in range(j1, j2):
-                    table_rows.append(_add_row(j+1, html.escape(new_lines[j])))
+                    table_rows.append(_diff_add_row(j+1, html.escape(new_lines[j])))
             else:
                 # Paired with word-level highlighting
                 max_len = max(old_n, new_n)
@@ -1056,29 +1190,53 @@ def _page_diff(old_name, old_text, new_name, new_text, session_token):
                     has_new = k < new_n
                     if has_old and has_new:
                         oh, nh = _word_highlight(old_lines[i1+k], new_lines[j1+k])
-                        table_rows.append(_replace_row(i1+k+1, oh, j1+k+1, nh))
+                        table_rows.append(_diff_replace_row(i1+k+1, oh, j1+k+1, nh))
                     elif has_old:
-                        table_rows.append(_del_row(i1+k+1, html.escape(old_lines[i1+k])))
+                        table_rows.append(_diff_del_row(i1+k+1, html.escape(old_lines[i1+k])))
                     else:
-                        table_rows.append(_add_row(j1+k+1, html.escape(new_lines[j1+k])))
+                        table_rows.append(_diff_add_row(j1+k+1, html.escape(new_lines[j1+k])))
 
         elif tag == "delete":
             del_count += i2 - i1
             for i in range(i1, i2):
-                table_rows.append(_del_row(i+1, html.escape(old_lines[i])))
+                table_rows.append(_diff_del_row(i+1, html.escape(old_lines[i])))
 
         elif tag == "insert":
             add_count += j2 - j1
             for j in range(j1, j2):
-                table_rows.append(_add_row(j+1, html.escape(new_lines[j])))
+                table_rows.append(_diff_add_row(j+1, html.escape(new_lines[j])))
+
+    return table_rows, add_count, del_count
+
+
+def _snap_ts_label(snap_name):
+    """Extract human-readable timestamp from snapshot filename (YYYYMMDD_HHMMSS_...)."""
+    try:
+        parts = snap_name.split("_")
+        return f"{parts[0][:4]}-{parts[0][4:6]}-{parts[0][6:8]} {parts[1][:2]}:{parts[1][2:4]}:{parts[1][4:6]}"
+    except (IndexError, ValueError):
+        return snap_name
+
+
+def _page_diff(old_name, old_text, new_name, new_text, session_token, real_path=None):
+    """Generate a VS Code-style side-by-side diff page."""
+    back_link = f'<a href="/list/{session_token}">\u2190 List</a>'
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
+
+    display_name = os.path.basename(real_path) if real_path else os.path.splitext(old_name.split("_", 2)[-1])[0] + os.path.splitext(old_name)[1] if "_" in old_name else old_name
+    old_ts = _snap_ts_label(old_name)
+    new_ts = _snap_ts_label(new_name)
+
+    table_rows, add_count, del_count = _make_diff_rows(old_lines, new_lines)
 
     if not table_rows:
         diff_html = '<div class="no-preview">No differences found.</div>'
     else:
         diff_html = (
             f'<div class="diff-fheader">'
-            f'<div><span class="fh-old">{html.escape(old_name)}</span></div>'
-            f'<div><span class="fh-new">{html.escape(new_name)}</span></div></div>'
+            f'<div><span class="fh-old">Old File</span></div>'
+            f'<div><span class="fh-new">New File</span></div></div>'
             f'<div class="diff-wrap"><table class="diff-table">'
             f'<colgroup><col class="ln"><col class="mk"><col>'
             f'<col class="gt">'
@@ -1089,11 +1247,11 @@ def _page_diff(old_name, old_text, new_name, new_text, session_token):
                 '<option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option></select>')
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Diff</title><style>{_CSS}</style></head>
+<title>Diff: {html.escape(display_name)}</title><style>{_CSS}</style></head>
 <body><div class="container diff-page">
-<div class="topbar">{back_link}<span class="fname">Diff</span>{lang_sel}</div>
+<div class="topbar">{back_link}<span class="fname">{html.escape(display_name)}</span>{lang_sel}</div>
 <div class="diff-meta">
-  <div style="color:#8b949e;font-size:0.85em">{html.escape(old_name)} \u2192 {html.escape(new_name)}</div>
+  <div style="color:#8b949e;font-size:0.85em">{old_ts} \u2192 {new_ts}</div>
   <div class="diff-stats"><span class="add-count">+{add_count}</span><span class="del-count">\u2212{del_count}</span></div>
 </div>
 <hr class="separator">
@@ -1105,87 +1263,18 @@ def _diff_fragment(old_name, old_text, new_name, new_text):
     """Generate just the diff HTML fragment (no full page wrapper). For AJAX loading."""
     old_lines = old_text.splitlines()
     new_lines = new_text.splitlines()
-    sm = difflib.SequenceMatcher(None, old_lines, new_lines)
-    table_rows = []
-    add_count = 0
-    del_count = 0
-    CONTEXT = 3
+    old_ts = _snap_ts_label(old_name)
+    new_ts = _snap_ts_label(new_name)
 
-    def _ctx_row(i, j, text):
-        esc = html.escape(text)
-        return (f'<tr><td class="ln">{i}</td><td class="mk"></td><td class="code">{esc}</td>'
-                f'<td class="gt"></td>'
-                f'<td class="ln">{j}</td><td class="mk"></td><td class="code">{esc}</td></tr>')
-
-    def _del_row(i, text):
-        return (f'<tr><td class="ln dl">{i}</td><td class="mk dl">\u2212</td><td class="code dl">{text}</td>'
-                f'<td class="gt"></td>'
-                f'<td class="ln el"></td><td class="mk el"></td><td class="code el"></td></tr>')
-
-    def _add_row(j, text):
-        return (f'<tr><td class="ln el"></td><td class="mk el"></td><td class="code el"></td>'
-                f'<td class="gt"></td>'
-                f'<td class="ln al">{j}</td><td class="mk al">+</td><td class="code al">{text}</td></tr>')
-
-    def _replace_row(i, old_html, j, new_html):
-        return (f'<tr><td class="ln dl">{i}</td><td class="mk dl">\u2212</td><td class="code dl">{old_html}</td>'
-                f'<td class="gt"></td>'
-                f'<td class="ln al">{j}</td><td class="mk al">+</td><td class="code al">{new_html}</td></tr>')
-
-    for tag, i1, i2, j1, j2 in sm.get_opcodes():
-        if tag == "equal":
-            n = i2 - i1
-            if n > CONTEXT * 2 + 1:
-                for k in range(CONTEXT):
-                    table_rows.append(_ctx_row(i1+k+1, j1+k+1, old_lines[i1+k]))
-                folded = n - CONTEXT * 2
-                table_rows.append(
-                    f'<tr class="fold-row"><td colspan="3"></td><td class="gt"></td>'
-                    f'<td colspan="3"><span class="fold-icon">\u2195</span>{folded} lines hidden</td></tr>')
-                for k in range(CONTEXT):
-                    ii, jj = i2 - CONTEXT + k, j2 - CONTEXT + k
-                    table_rows.append(_ctx_row(ii+1, jj+1, old_lines[ii]))
-            else:
-                for i, j in zip(range(i1, i2), range(j1, j2)):
-                    table_rows.append(_ctx_row(i+1, j+1, old_lines[i]))
-        elif tag == "replace":
-            old_n = i2 - i1
-            new_n = j2 - j1
-            del_count += old_n
-            add_count += new_n
-            if max(old_n, new_n) > 2 * min(old_n, new_n):
-                for i in range(i1, i2):
-                    table_rows.append(_del_row(i+1, html.escape(old_lines[i])))
-                for j in range(j1, j2):
-                    table_rows.append(_add_row(j+1, html.escape(new_lines[j])))
-            else:
-                max_len = max(old_n, new_n)
-                for k in range(max_len):
-                    has_old = k < old_n
-                    has_new = k < new_n
-                    if has_old and has_new:
-                        oh, nh = _word_highlight(old_lines[i1+k], new_lines[j1+k])
-                        table_rows.append(_replace_row(i1+k+1, oh, j1+k+1, nh))
-                    elif has_old:
-                        table_rows.append(_del_row(i1+k+1, html.escape(old_lines[i1+k])))
-                    else:
-                        table_rows.append(_add_row(j1+k+1, html.escape(new_lines[j1+k])))
-        elif tag == "delete":
-            del_count += i2 - i1
-            for i in range(i1, i2):
-                table_rows.append(_del_row(i+1, html.escape(old_lines[i])))
-        elif tag == "insert":
-            add_count += j2 - j1
-            for j in range(j1, j2):
-                table_rows.append(_add_row(j+1, html.escape(new_lines[j])))
+    table_rows, add_count, del_count = _make_diff_rows(old_lines, new_lines)
 
     if not table_rows:
         return '<div class="no-preview">No differences found.</div>'
 
     return (
         f'<div class="diff-fheader">'
-        f'<div><span class="fh-old">{html.escape(old_name)}</span></div>'
-        f'<div><span class="fh-new">{html.escape(new_name)}</span></div></div>'
+        f'<div><span class="fh-old">Old File ({old_ts})</span></div>'
+        f'<div><span class="fh-new">New File ({new_ts})</span></div></div>'
         f'<div class="diff-meta" style="border-radius:0;border-top:none;margin:0">'
         f'<div></div>'
         f'<div class="diff-stats"><span class="add-count">+{add_count}</span>'
@@ -1259,6 +1348,7 @@ def _page_diff_tool(entries, session_token):
         <option value="">--</option>
       </select>
     </div>
+    <div class="dt-snap-divider">\u2192</div>
     <div>
       <label data-i18n="dt_right">\uc6b0\uce21 (\uc774\ud6c4)</label>
       <select id="dt-snap-r" disabled onchange="dtSnapChange('{session_token}')">
@@ -1387,35 +1477,50 @@ def _do_rollback_file(snapshot_name):
 
 
 def _do_rollback_cycle(run_id, entries):
-    """Rollback all files from a cycle ONWARDS to their pre-cycle state.
-    e.g. rolling back #9 also undoes #10, #11, etc.
+    """Restore all files to the state AT the end of the specified cycle.
+    e.g. restoring to #6 keeps #6's changes, undoes #7, #8, etc.
     Returns (success: bool, message: str, count: int)."""
     from state import add_modified_file
 
-    # Find entries belonging to the target cycle
-    target_entries = [e for e in entries if e.get("run_id") == run_id]
-    if not target_entries:
-        return False, "Cycle not found", 0
+    # Collect paths that may need restoring:
+    # 1) Paths with original edits after the target cycle
+    # 2) Paths that were affected by any rollback (state may differ from original)
+    affected_paths = set()
+    for e in entries:
+        rid = e.get("run_id", 0)
+        op = e.get("op", "")
+        if rid > run_id and op not in ("rollback-backup", "rollback"):
+            affected_paths.add(e["path"])
+        if op == "rollback":
+            affected_paths.add(e["path"])
 
-    # Global cutoff: earliest timestamp in the target cycle
-    global_cutoff_ts = min(e["ts"] for e in target_entries)
+    if not affected_paths:
+        return False, "Nothing to restore", 0
 
-    # Collect ALL entries from target cycle onwards (includes later cycles)
-    affected_entries = [e for e in entries if e.get("run_id", 0) >= run_id]
-    # Get unique paths across all affected cycles
-    affected_paths = list(dict.fromkeys(e["path"] for e in affected_entries))
-
+    affected_paths = list(affected_paths)
     restored = 0
     for path in affected_paths:
         all_entries_for_path = [e for e in entries if e["path"] == path]
         all_entries_for_path.sort(key=lambda e: e["ts"])
 
-        # Find the most recent snapshot BEFORE the target cycle's start
-        prev_snapshot = None
+        # Find the most recent ORIGINAL snapshot at or before the target cycle
+        # (exclude rollback/rollback-backup entries to get the true original state)
+        target_snapshot = None
         for e in reversed(all_entries_for_path):
-            if e["ts"] < global_cutoff_ts and e.get("snapshot"):
-                prev_snapshot = e["snapshot"]
+            if (e.get("run_id", 0) <= run_id and e.get("snapshot")
+                    and e.get("op") not in ("rollback", "rollback-backup")):
+                target_snapshot = e["snapshot"]
                 break
+
+        # Skip if current file already matches target snapshot
+        if target_snapshot:
+            snap_path = os.path.join(_SNAPSHOTS_DIR, target_snapshot)
+            try:
+                with open(snap_path, "rb") as sf, open(path, "rb") as cf:
+                    if sf.read() == cf.read():
+                        continue  # Already at target state
+            except Exception:
+                pass
 
         # Backup current file
         if os.path.isfile(path):
@@ -1427,9 +1532,9 @@ def _do_rollback_cycle(run_id, entries):
             except Exception:
                 pass
 
-        if prev_snapshot:
-            # Restore to previous snapshot
-            snap_path = os.path.join(_SNAPSHOTS_DIR, prev_snapshot)
+        if target_snapshot:
+            # Restore to the target cycle's snapshot
+            snap_path = os.path.join(_SNAPSHOTS_DIR, target_snapshot)
             try:
                 with open(snap_path, "rb") as f:
                     content = f.read()
@@ -1442,25 +1547,19 @@ def _do_rollback_cycle(run_id, entries):
             except Exception as ex:
                 log.warning("Failed to restore %s: %s", path, ex)
         else:
-            # No prior snapshot found for this path.
-            # Only delete if the first real op (not rollback) in the affected range
-            # is "write" (new file). If "edit", the file pre-existed — leave it.
-            real_ops = [e for e in all_entries_for_path
-                        if e.get("run_id", 0) >= run_id
-                        and e.get("op") not in ("rollback-backup", "rollback")]
-            real_ops.sort(key=lambda e: e["ts"])
-            first_op = real_ops[0].get("op", "edit") if real_ops else "edit"
-            if first_op == "write" and os.path.isfile(path):
+            # No snapshot at or before the target cycle — file was created after it.
+            # Delete to match the state at the target cycle.
+            if os.path.isfile(path):
                 try:
                     os.remove(path)
                     add_modified_file(path, content=None, op="delete")
                     restored += 1
                 except Exception as ex:
                     log.warning("Failed to delete %s: %s", path, ex)
-            else:
-                log.info("Skipped rollback for %s: no prior snapshot, file pre-existed cycle", path)
 
-    log.info("Cycle #%d+ rollback: %d/%d files restored", run_id, restored, len(affected_paths))
+    if restored == 0:
+        return True, "SAME_STATE", 0
+    log.info("Restore to cycle #%d: %d/%d files restored", run_id, restored, len(affected_paths))
     return True, "OK", restored
 
 
@@ -1581,7 +1680,9 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             if old_text is None or new_text is None:
                 self._send_error(404, "Snapshot not found")
                 return
-            body = _page_diff(snap_old, old_text, snap_new, new_text, session_token)
+            from state import find_path_for_snapshot
+            real_path = find_path_for_snapshot(snap_new) or find_path_for_snapshot(snap_old)
+            body = _page_diff(snap_old, old_text, snap_new, new_text, session_token, real_path=real_path)
             self._send_html(200, body)
             return
 
@@ -1745,7 +1846,9 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 self._send_text(400, "Invalid cycle ID")
                 return
             ok, msg, count = _do_rollback_cycle(run_id, self.modified_entries)
-            if ok:
+            if ok and msg == "SAME_STATE":
+                self._send_text(200, "SAME_STATE")
+            elif ok:
                 from state import state
                 _ViewerHandler.modified_entries = list(state.modified_files)
                 self._send_text(200, f"OK: {count} files restored")
