@@ -27,7 +27,8 @@ A Telegram bot that bridges your phone to a running Claude Code CLI session. Sen
 - **Self-updating** — `/update_bot` checks GitHub for updates and applies them automatically
 - **Duplicate process guard** — Automatically detects and kills duplicate bot instances on startup
 - **Slash commands** — Use Claude Code slash commands (`/compact`, `/review`, etc.) directly from Telegram
-- **OMC skill support** — `/autopilot`, `/ralph`, `/team`, and all oh-my-claudecode skills
+- **Plugin skill auto-discovery** — Automatically detects installed Claude Code plugins and creates per-plugin menu commands (e.g., `/omc`) with tap-to-copy skill lists
+- **Web file viewer** — Browse and download files modified by Claude through a secure web interface (cloudflared tunnel, read-only, session-scoped access tokens)
 - **Settings UI** — `/settings` with inline keyboard for toggling cost display, status messages, token range
 - **Auto-start on boot** — systemd (Linux), launchd (macOS), Task Scheduler (Windows), .bashrc (WSL)
 - **Zero dependencies** — Pure Python, no pip packages required
@@ -124,6 +125,7 @@ GitHub Repository                    Your Machine
 | `/update_bot` | Check GitHub for updates and auto-apply |
 | `/builtin` | List CLI built-in commands |
 | `/skills` | List OMC skills |
+| `/omc` | Show OMC plugin skills (auto-discovered, tap-to-copy) |
 
 ### Passthrough Commands
 
@@ -138,6 +140,16 @@ These are forwarded directly to Claude Code CLI:
 | `/autopilot` | OMC autonomous execution |
 | `/ralph` | OMC repeat until complete |
 | `/team` | OMC multi-agent collaboration |
+
+### Web File Viewer
+
+When Claude modifies files during a session, the bot automatically sends a secure link to view them in your browser.
+
+- **Read-only** — View and download only; no editing or uploading
+- **Auto-detected** — Tracks `Edit` and `Write` tool usage from Claude CLI output
+- **Secure access** — Session-scoped token URL via cloudflared tunnel; valid until next Claude run
+- **File type preview** — Code files with line numbers, images inline, other files download-only
+- **Auto-setup** — cloudflared is automatically downloaded on first run if not installed
 
 ## Usage Examples
 
@@ -187,6 +199,8 @@ Analyze the mutation.go file
 │   ├── __init__.py      # i18n loader & t() function
 │   ├── ko.json          # Korean language pack
 │   └── en.json          # English language pack
+├── fileviewer.py        # Read-only HTTP file viewer server
+├── tunnel.py            # Cloudflared tunnel management
 ├── commands/
 │   ├── __init__.py      # Command registry (@command, @callback)
 │   ├── basic.py         # /help, /status, /cost, /model, /cancel
@@ -194,7 +208,7 @@ Analyze the mutation.go file
 │   ├── settings.py      # /settings (inline keyboard)
 │   ├── update.py        # /update_bot
 │   ├── total_tokens.py  # /total_tokens (multi-PC)
-│   ├── skills.py        # /builtin, /skills
+│   ├── skills.py        # /builtin, /skills, dynamic plugin menus
 │   └── session_cmd.py   # /session, /clear, selection, answers
 ├── config.json          # Your settings (secrets — chmod 600)
 ├── bot.log              # Runtime log
@@ -330,6 +344,8 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.claude-telegram-bot"
     ├── tokens.py               # Token tracking & multi-PC aggregation
     ├── sessions.py             # Session listing & management
     ├── downloader.py           # Telegram file download & prompt building
+    ├── fileviewer.py           # Read-only HTTP file viewer server
+    ├── tunnel.py               # Cloudflared tunnel management
     ├── telegram-bot-ko.py      # v1→v2 migration script (Korean)
     ├── telegram-bot-en.py      # v1→v2 migration script (English)
     ├── i18n/
@@ -376,7 +392,8 @@ MIT License. See [LICENSE](LICENSE) for details.
 - **자동 업데이트** — `/update_bot`으로 GitHub에서 최신 버전 확인 및 자동 적용
 - **중복 실행 방지** — 시작 시 중복 봇 프로세스를 자동 감지하고 종료
 - **슬래시 명령어** — Claude Code 슬래시 명령어 (`/compact`, `/review` 등)를 텔레그램에서 직접 사용
-- **OMC 스킬 지원** — `/autopilot`, `/ralph`, `/team` 등 oh-my-claudecode 스킬 전체 지원
+- **플러그인 스킬 자동 탐색** — 설치된 Claude Code 플러그인을 자동 감지하여 플러그인별 메뉴 명령어 생성 (예: `/omc`), 탭하면 명령어 복사
+- **웹 파일 뷰어** — Claude가 수정한 파일을 안전한 웹 인터페이스로 열람/다운로드 (cloudflared 터널, 읽기 전용, 세션 범위 토큰)
 - **설정 UI** — `/settings`로 인라인 키보드를 통해 비용 표시, 상태 메시지, 토큰 범위 전환
 - **부팅 시 자동 시작** — systemd (Linux), launchd (macOS), 작업 스케줄러 (Windows), .bashrc (WSL)
 - **외부 의존성 없음** — 순수 Python, pip 패키지 불필요
@@ -439,6 +456,7 @@ powershell -ExecutionPolicy Bypass -File setup.ps1
 | `/update_bot` | GitHub에서 최신 버전 확인 및 자동 업데이트 |
 | `/builtin` | CLI 빌트인 명령어 목록 |
 | `/skills` | OMC 스킬 목록 |
+| `/omc` | OMC 플러그인 스킬 보기 (자동 탐색, 탭하면 복사) |
 
 ## 보안 참고사항
 

@@ -210,6 +210,37 @@ install_bot() {
 EOF
     chmod 600 "$CONFIG_PATH"
     ok "Config saved: $CONFIG_PATH"
+
+    # Install cloudflared for file viewer
+    if ! command -v cloudflared &>/dev/null && [ ! -f "$INSTALL_DIR/cloudflared" ]; then
+        info "Installing cloudflared for file viewer..."
+        local cf_arch
+        case "$(uname -m)" in
+            x86_64)         cf_arch="amd64" ;;
+            aarch64|arm64)  cf_arch="arm64" ;;
+            armv7l)         cf_arch="arm" ;;
+            *)              cf_arch="amd64" ;;
+        esac
+        local cf_url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cf_arch}"
+        if [[ "$(uname)" == "Darwin" ]]; then
+            cf_url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-${cf_arch}.tgz"
+            if curl -sL "$cf_url" -o "/tmp/cloudflared.tgz" 2>/dev/null; then
+                tar -xzf /tmp/cloudflared.tgz -C "$INSTALL_DIR" cloudflared 2>/dev/null
+                chmod +x "$INSTALL_DIR/cloudflared"
+                rm -f /tmp/cloudflared.tgz
+                ok "cloudflared installed"
+            else
+                warn "cloudflared install failed (will auto-install on first run)"
+            fi
+        else
+            if curl -sL "$cf_url" -o "$INSTALL_DIR/cloudflared" 2>/dev/null; then
+                chmod +x "$INSTALL_DIR/cloudflared"
+                ok "cloudflared installed"
+            else
+                warn "cloudflared install failed (will auto-install on first run)"
+            fi
+        fi
+    fi
 }
 
 # --- Verify Token ---

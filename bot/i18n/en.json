@@ -224,5 +224,8 @@
     "title": "{plugin} Skills ({count})",
     "hint": "Tap a command to copy. Add arguments and send.",
     "botfather_desc": "{plugin} plugin skills ({count})"
+  },
+  "file_viewer": {
+    "link": "View modified files ({count})"
   }
 }

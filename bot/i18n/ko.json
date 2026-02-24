@@ -224,5 +224,8 @@
     "title": "{plugin} 스킬 ({count}개)",
     "hint": "명령어를 탭하면 복사됩니다. 인자를 붙여서 전송하세요.",
     "botfather_desc": "{plugin} 플러그인 스킬 ({count}개)"
+  },
+  "file_viewer": {
+    "link": "수정된 파일 보기 ({count}개)"
   }
 }
