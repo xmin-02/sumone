@@ -210,7 +210,7 @@ def process_update(update):
         return
 
     if state.waiting_token_input:
-        handle_token_input(text, user_msg_id=msg.get("message_id"))
+        handle_token_input(text)
         return
 
     if state.answering:
@@ -241,14 +241,147 @@ def process_update(update):
 # Bot command sync + startup
 # ---------------------------------------------------------------------------
 
+def _discover_plugin_skills():
+    """Scan installed Claude Code plugins and extract skills from SKILL.md files.
+
+    Searches two locations:
+      1. installPath from installed_plugins.json (+ plugin.json skills path)
+      2. marketplaces/<marketplace>/skills/ directories
+    """
+    import re as _re
+    claude_dir = os.path.join(os.path.expanduser("~"), ".claude", "plugins")
+    if not os.path.isdir(claude_dir):
+        return []
+
+    skills = []
+    seen = set()
+
+    def _parse_skill_md(skill_md, plugin_name):
+        """Parse a single SKILL.md and append to skills list."""
+        try:
+            with open(skill_md, encoding="utf-8") as f:
+                content = f.read()
+        except Exception:
+            return
+        m = _re.match(r"^---\r?\n(.*?)\r?\n---", content, _re.DOTALL)
+        if not m:
+            return
+        name = os.path.basename(os.path.dirname(skill_md))
+        desc = ""
+        for line in m.group(1).split("\n"):
+            colon = line.find(":")
+            if colon == -1:
+                continue
+            key = line[:colon].strip()
+            val = line[colon + 1:].strip().strip("'\"")
+            if key == "name":
+                name = val
+            elif key == "description":
+                desc = val
+        cmd = name.lower().replace("-", "_")
+        if cmd not in seen and desc:
+            seen.add(cmd)
+            skills.append((cmd, f"({plugin_name}) {desc}"))
+
+    def _scan_skills_dir(skills_dir, plugin_name):
+        """Scan a skills directory for SKILL.md files."""
+        if not os.path.isdir(skills_dir):
+            return
+        try:
+            entries = os.listdir(skills_dir)
+        except Exception:
+            return
+        for entry in entries:
+            skill_md = os.path.join(skills_dir, entry, "SKILL.md")
+            if os.path.isfile(skill_md):
+                _parse_skill_md(skill_md, plugin_name)
+
+    # 1. Installed plugins (installPath + plugin.json)
+    plugins_file = os.path.join(claude_dir, "installed_plugins.json")
+    if os.path.isfile(plugins_file):
+        try:
+            with open(plugins_file, encoding="utf-8") as f:
+                data = json.load(f)
+            for plugin_key, installs in data.get("plugins", {}).items():
+                plugin_name = plugin_key.split("@")[0] if "@" in plugin_key else plugin_key
+                for install in installs:
+                    install_path = install.get("installPath", "")
+                    if not install_path or not os.path.isdir(install_path):
+                        continue
+                    plugin_json = os.path.join(install_path, ".claude-plugin", "plugin.json")
+                    skills_dir = os.path.join(install_path, "skills")
+                    if os.path.isfile(plugin_json):
+                        try:
+                            with open(plugin_json, encoding="utf-8") as f:
+                                pdata = json.load(f)
+                            skills_rel = pdata.get("skills", "./skills/")
+                            skills_dir = os.path.normpath(os.path.join(install_path, skills_rel))
+                        except Exception:
+                            pass
+                    _scan_skills_dir(skills_dir, plugin_name)
+        except Exception:
+            pass
+
+    # 2. Marketplace plugins (marketplaces/<name>/skills/ and nested plugins)
+    marketplaces_dir = os.path.join(claude_dir, "marketplaces")
+    if os.path.isdir(marketplaces_dir):
+        try:
+            for marketplace in os.listdir(marketplaces_dir):
+                mp_path = os.path.join(marketplaces_dir, marketplace)
+                if not os.path.isdir(mp_path):
+                    continue
+                # Direct skills/ (e.g. marketplaces/omc/skills/)
+                _scan_skills_dir(os.path.join(mp_path, "skills"), marketplace)
+                # Nested plugins/ (e.g. marketplaces/official/plugins/<name>/skills/)
+                for sub_dir in ("plugins", "external_plugins"):
+                    sub_path = os.path.join(mp_path, sub_dir)
+                    if not os.path.isdir(sub_path):
+                        continue
+                    for sub_plugin in os.listdir(sub_path):
+                        _scan_skills_dir(
+                            os.path.join(sub_path, sub_plugin, "skills"),
+                            sub_plugin,
+                        )
+        except Exception:
+            pass
+
+    log.info("Discovered %d plugin skills total", len(skills))
+    return skills
+
+
 def _sync_bot_commands():
-    """Register bot commands with BotFather on startup."""
+    """Register bot commands with BotFather on startup.
+
+    Merges i18n bot_commands with auto-discovered plugin skills.
+    """
     try:
+        # 1. Base commands from i18n
         bot_commands = i18n.t("bot_commands")
-        if isinstance(bot_commands, list):
-            commands_list = [{"command": c, "description": d} for c, d in bot_commands]
-            tg_api("setMyCommands", {"commands": json.dumps(commands_list)})
-            log.info("BotFather commands synced (%d commands)", len(commands_list))
+        if not isinstance(bot_commands, list):
+            bot_commands = []
+
+        # 2. Auto-discover plugin skills
+        plugin_skills = _discover_plugin_skills()
+        log.info("Discovered %d plugin skills", len(plugin_skills))
+
+        # 3. Merge: base commands take priority, then plugin skills (no duplicates)
+        seen = set()
+        merged = []
+        for cmd, desc in bot_commands:
+            key = cmd.lower()
+            if key not in seen:
+                seen.add(key)
+                merged.append({"command": cmd, "description": desc})
+        for cmd, desc in plugin_skills:
+            if cmd not in seen:
+                seen.add(cmd)
+                # Telegram limits description to 256 chars
+                merged.append({"command": cmd, "description": desc[:256]})
+
+        if merged:
+            tg_api("setMyCommands", {"commands": json.dumps(merged)})
+            log.info("BotFather commands synced (%d total: %d base + %d plugin)",
+                     len(merged), len(merged) - len(plugin_skills), len(plugin_skills))
     except Exception as e:
         log.warning("Failed to sync commands: %s", e)
 
