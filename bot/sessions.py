@@ -7,6 +7,8 @@ import time
 from config import IS_WINDOWS, log
 from state import state
 
+_SUMONE_SESSIONS = os.path.expanduser("~/.sumone/sessions")
+
 
 def _discover_claude_roots():
     """Auto-discover all .claude/projects directories on the system."""
@@ -75,6 +77,45 @@ def get_sessions(limit=10):
     return sessions
 
 
+def get_provider_sessions(provider, limit=10):
+    """Get sessions for a specific provider."""
+    if provider == "claude":
+        return get_sessions(limit)
+    # Codex/Gemini: scan ~/.sumone/sessions/*.json filtered by provider
+    if not os.path.isdir(_SUMONE_SESSIONS):
+        return []
+    from i18n import t
+    raw = []
+    try:
+        fnames = os.listdir(_SUMONE_SESSIONS)
+    except Exception:
+        return []
+    for fname in fnames:
+        if not fname.endswith(".json"):
+            continue
+        fpath = os.path.join(_SUMONE_SESSIONS, fname)
+        try:
+            with open(fpath, encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("provider") != provider:
+                continue
+            sid = fname[:-5]
+            mtime = os.path.getmtime(fpath)
+            exchanges = data.get("exchanges", [])
+            preview = exchanges[0].get("user", "")[:80] if exchanges else ""
+            if not preview:
+                preview = t("session.no_preview")
+            raw.append((mtime, sid, preview))
+        except Exception:
+            continue
+    raw.sort(key=lambda x: x[0], reverse=True)
+    sessions = []
+    for mtime, sid, preview in raw[:limit]:
+        ts = time.strftime("%m/%d %H:%M", time.localtime(mtime))
+        sessions.append((sid, ts, preview))
+    return sessions
+
+
 def _get_first_user_message(fpath):
     from i18n import t
     try:
@@ -105,6 +146,18 @@ def _extract_text(content):
 
 
 def get_session_model(session_id):
+    # Check sumone session summary first (has explicit model field)
+    sumone_path = os.path.join(_SUMONE_SESSIONS, f"{session_id}.json")
+    if os.path.isfile(sumone_path):
+        try:
+            with open(sumone_path, encoding="utf-8") as f:
+                data = json.load(f)
+            model = data.get("model")
+            if model:
+                return model
+        except Exception:
+            pass
+    # Claude JSONL fallback
     for proj_dir in find_project_dirs():
         fpath = os.path.join(proj_dir, f"{session_id}.jsonl")
         if not os.path.exists(fpath): continue
@@ -122,4 +175,17 @@ def get_session_model(session_id):
                     m = e.get("message", {}).get("model", "")
                     if m: return m
         except Exception: pass
+    return None
+
+
+def get_session_provider(session_id):
+    """Get the provider for a session from sumone summary."""
+    sumone_path = os.path.join(_SUMONE_SESSIONS, f"{session_id}.json")
+    if os.path.isfile(sumone_path):
+        try:
+            with open(sumone_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return data.get("provider")
+        except Exception:
+            pass
     return None
