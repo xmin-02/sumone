@@ -19,7 +19,7 @@ from telegram import (
 )
 from tokens import token_footer, get_monthly_tokens, publish_token_data, PUBLISH_INTERVAL
 from downloader import download_tg_file, build_file_prompt
-from claude import run_claude
+from ai import get_runner, RunnerCallbacks, format_time
 from sessions import get_session_model
 
 # Import command modules to trigger @command/@callback decorator registration
@@ -56,6 +56,74 @@ def handle_message(text):
     _run_message(text)
 
 
+def _send_file_viewer_link(had_new_files):
+    """If files were modified in this run and file viewer is active, send a link."""
+    if not had_new_files or not state.file_viewer_url:
+        return
+    if not settings.get("auto_viewer_link", True):
+        return
+    try:
+        from fileviewer import generate_token, get_or_create_fixed_token
+        # Delete previous viewer link messages
+        for mid in state._viewer_msg_ids:
+            delete_msg(mid)
+        state._viewer_msg_ids.clear()
+        if settings.get("viewer_link_fixed", False):
+            token = get_or_create_fixed_token()
+        else:
+            token = generate_token()
+        url = f"{state.file_viewer_url}?token={token}"
+        count = len(set(e["path"] for e in state.modified_files))
+        label = i18n.t("file_viewer.link", count=count)
+        result = tg_api("sendMessage", {
+            "chat_id": CHAT_ID,
+            "text": f'<a href="{url}">{escape_html(label)}</a>',
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        })
+        try:
+            msg_id = result["result"]["message_id"]
+            state._viewer_msg_ids.append(msg_id)
+        except (TypeError, KeyError):
+            pass
+        if state._file_server:
+            state._file_server.update_files(state.modified_files)
+        log.info("File viewer link sent (%d files)", count)
+    except Exception as e:
+        log.warning("Failed to send file viewer link: %s", e)
+
+
+def _on_intermediate_text(text):
+    """Callback: send intermediate AI text to Telegram."""
+    from telegram import md_to_telegram_html, split_message
+    html = md_to_telegram_html(text)
+    chunks = split_message(html)
+    for idx, chunk in enumerate(chunks):
+        send_html(f"\U0001f4ad {chunk}")
+        if idx < len(chunks) - 1:
+            time.sleep(0.3)
+
+
+def _on_status(label, elapsed_secs):
+    """Callback: send status message to Telegram."""
+    mins, secs = divmod(elapsed_secs, 60)
+    t_str = format_time(mins, secs)
+    send_html(f"<i>{escape_html(label)} ({t_str})</i>")
+
+
+def _on_cost(parsed):
+    """Callback: send cost info to Telegram."""
+    if not settings["show_cost"]:
+        return
+    dur_s = parsed.duration_ms / 1000 if parsed.duration_ms else 0
+    mins, secs = divmod(int(dur_s), 60)
+    dur_str = format_time(mins, secs)
+    cost_line = i18n.t("cost.line", cost=f"{parsed.cost_usd:.4f}", duration=dur_str,
+                       turns=parsed.num_turns, in_tok=f"{parsed.tokens_in:,}",
+                       out_tok=f"{parsed.tokens_out:,}")
+    send_html(f"<i>{cost_line}</i>")
+
+
 def _run_message(text):
     """Internal: execute a single message with typing animation."""
     # Animated typing indicator
@@ -89,9 +157,21 @@ def _run_message(text):
 
     def _run():
         try:
-            log.info("Claude starting for: %s", text[:80])
-            output, new_sid, questions = run_claude(text, session_id=sid)
-            log.info("Claude finished, output=%d chars, new_sid=%s, questions=%s",
+            callbacks = RunnerCallbacks(
+                on_text=_on_intermediate_text,
+                on_status=_on_status,
+                on_typing=send_typing,
+                on_cost=_on_cost,
+                on_file_link=_send_file_viewer_link,
+            )
+            runner = get_runner(callbacks=callbacks)
+            provider_label = config.AI_MODELS.get(
+                state.provider, {}).get("label", state.provider.title())
+
+            log.info("%s starting for: %s", provider_label, text[:80])
+            output, new_sid, questions = runner.run(text, session_id=sid)
+            log.info("%s finished, output=%d chars, new_sid=%s, questions=%s",
+                     provider_label,
                      len(output) if output else 0, new_sid, bool(questions))
 
             if new_sid and not state.session_id:
@@ -108,7 +188,7 @@ def _run_message(text):
             if questions:
                 show_questions(questions, active_sid)
                 if output and output not in ("",):
-                    header = "Claude"
+                    header = provider_label
                     if active_sid:
                         header += f" [{active_sid[:8]}]"
                     send_long(header, output, footer=footer)
@@ -117,7 +197,7 @@ def _run_message(text):
             if not output:
                 return
 
-            header = "Claude"
+            header = provider_label
             if active_sid:
                 header += f" [{active_sid[:8]}]"
             send_long(header, output, footer=footer)
@@ -618,12 +698,13 @@ def _apply_default_model():
         return  # session already has a model set
     sub = config.settings.get("default_sub_model")
     ai = config.settings.get("default_model", "claude")
+    state.provider = ai
     ai_info = config.AI_MODELS.get(ai)
     if ai_info and sub:
         resolved = ai_info["sub_models"].get(sub)
         if resolved:
             state.model = resolved
-            config.log.info("Default model applied: %s", resolved)
+            config.log.info("Default model applied: %s (%s)", resolved, ai)
 
 
 def main():
@@ -635,8 +716,8 @@ def main():
         log.info("Signal %s, exiting.", signum)
         _stop_file_viewer()
         with state.lock:
-            if state.claude_proc and state.claude_proc.poll() is None:
-                state.claude_proc.kill()
+            if state.ai_proc and state.ai_proc.poll() is None:
+                state.ai_proc.kill()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, sig_handler)

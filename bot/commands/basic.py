@@ -5,7 +5,7 @@ import sys
 
 from commands import command
 from i18n import t
-from config import IS_WINDOWS, MODEL_ALIASES, settings, log
+from config import IS_WINDOWS, AI_MODELS, MODEL_ALIASES, resolve_model, settings, log
 from state import state
 from telegram import escape_html, send_html, CHAT_ID
 from tokens import get_global_usage
@@ -63,37 +63,55 @@ def handle_model(text):
     parts = text.split(maxsplit=1)
     if len(parts) < 2 or parts[1].strip() == "":
         current = state.model or t("model.default_name")
-        aliases = ", ".join(sorted(MODEL_ALIASES.keys()))
+        provider_label = AI_MODELS.get(state.provider, {}).get("label", state.provider)
+        # Collect all aliases from all providers
+        all_aliases = set(MODEL_ALIASES.keys())
+        for info in AI_MODELS.values():
+            all_aliases.update(info.get("sub_models", {}).keys())
+        aliases = ", ".join(sorted(all_aliases))
         send_html(
-            f"<b>{t('model.current')}:</b> <code>{escape_html(current)}</code>\n{'━'*25}\n"
+            f"<b>{t('model.current')}:</b> <code>{escape_html(current)}</code> ({provider_label})\n{'━'*25}\n"
             f"<b>{t('model.usage')}:</b> /model [name]\n<b>{t('model.aliases')}:</b> {escape_html(aliases)}\n"
-            f"<b>{t('model.examples')}:</b>\n  /model opus\n  /model sonnet\n  /model haiku\n"
+            f"<b>{t('model.examples')}:</b>\n  /model opus\n  /model sonnet\n  /model o4-mini\n  /model flash\n"
             f"  /model {t('model.restore_default')}")
         return
     name = parts[1].strip().lower()
     reset_kw = t("model.reset_keywords")
     if isinstance(reset_kw, list) and name in reset_kw:
         state.model = None
+        state.provider = "claude"
         send_html(f"<b>{t('model.reset_done')}:</b> {t('model.reset_to')}"); return
-    resolved = MODEL_ALIASES.get(name)
+    # Resolve across all providers
+    resolved, provider = resolve_model(name)
     if not resolved:
-        if name.startswith("claude-"): resolved = name
+        # Allow raw model name with known prefixes
+        if name.startswith("claude-"):
+            resolved, provider = name, "claude"
+        elif name.startswith(("o3", "o4")):
+            resolved, provider = name, "codex"
+        elif name.startswith("gemini-"):
+            resolved, provider = name, "gemini"
         else:
-            aliases = ", ".join(sorted(MODEL_ALIASES.keys()))
+            all_aliases = set(MODEL_ALIASES.keys())
+            for info in AI_MODELS.values():
+                all_aliases.update(info.get("sub_models", {}).keys())
+            aliases = ", ".join(sorted(all_aliases))
             send_html(t("error.unknown_model", name=f"<code>{escape_html(name)}</code>", aliases=escape_html(aliases))); return
     state.model = resolved
-    send_html(f"<b>{t('model.changed')}:</b> <code>{escape_html(resolved)}</code>")
+    state.provider = provider
+    provider_label = AI_MODELS.get(provider, {}).get("label", provider)
+    send_html(f"<b>{t('model.changed')}:</b> <code>{escape_html(resolved)}</code> ({provider_label})")
 
 
 @command("/cancel")
 def handle_cancel(text):
-    with state.lock: proc = state.claude_proc; was_busy = state.busy
+    with state.lock: proc = state.ai_proc; was_busy = state.busy
     if proc and proc.poll() is None:
         if IS_WINDOWS:
             proc.terminate()
         else:
             proc.kill()
-        with state.lock: state.claude_proc = None; state.busy = False
+        with state.lock: state.ai_proc = None; state.busy = False
         send_html(f"<b>{t('cancel.done')}</b> {t('cancel.killed')}")
     elif was_busy:
         with state.lock: state.busy = False
@@ -127,9 +145,9 @@ def handle_restart_bot(text):
     except Exception as e:
         log.warning("Failed to stop file viewer: %s", e)
 
-    # Kill claude process if running
+    # Kill AI process if running
     with state.lock:
-        proc = state.claude_proc
+        proc = state.ai_proc
         if proc and proc.poll() is None:
             try:
                 if IS_WINDOWS:
@@ -138,7 +156,7 @@ def handle_restart_bot(text):
                     proc.kill()
             except Exception:
                 pass
-            state.claude_proc = None
+            state.ai_proc = None
         state.busy = False
 
     # Re-exec the current process (replaces current process image)

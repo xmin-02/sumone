@@ -47,7 +47,7 @@ def save_modified_files(entries):
         log.warning("Failed to save modified_files: %s", e)
 
 
-_current_run_id = 0  # incremented each run_claude() call
+_current_run_id = 0  # incremented each AI run() call
 _current_run_label = ""  # user message for current run
 
 
@@ -167,7 +167,13 @@ class State:
     answering = False
     session_list = []
     pending_question = None
-    claude_proc = None
+    ai_proc = None
+    provider = "claude"
+    provider_stats = {
+        "claude": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
+        "codex": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
+        "gemini": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
+    }
     busy = False
     model = None
     total_cost = 0.0

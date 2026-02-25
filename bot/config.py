@@ -43,10 +43,27 @@ THEME_OPTIONS = ["system", "dark", "light"]
 AI_MODELS = {
     "claude": {
         "label": "Claude",
+        "cli_cmd": "claude",
         "sub_models": {
             "haiku": "claude-haiku-4-5-20251001",
             "sonnet": "claude-sonnet-4-6",
             "opus": "claude-opus-4-6",
+        },
+    },
+    "codex": {
+        "label": "Codex",
+        "cli_cmd": "codex",
+        "sub_models": {
+            "o4-mini": "o4-mini",
+            "o3": "o3",
+        },
+    },
+    "gemini": {
+        "label": "Gemini",
+        "cli_cmd": "gemini",
+        "sub_models": {
+            "flash": "gemini-2.5-flash",
+            "pro": "gemini-2.5-pro",
         },
     },
 }
@@ -64,6 +81,28 @@ MODEL_ALIASES = {
     "s4": "claude-sonnet-4-6",
     "h4": "claude-haiku-4-5-20251001",
 }
+
+
+def resolve_model(name):
+    """Resolve model alias to (model_id, provider) or (None, None).
+
+    Searches all providers' sub_models and MODEL_ALIASES.
+    """
+    name_lower = name.lower()
+    # Check sub_models across all providers
+    for prov, info in AI_MODELS.items():
+        for alias, model_id in info.get("sub_models", {}).items():
+            if alias == name_lower or model_id.lower() == name_lower:
+                return model_id, prov
+    # Check legacy aliases
+    resolved = MODEL_ALIASES.get(name_lower)
+    if resolved:
+        # Find which provider owns this model
+        for prov, info in AI_MODELS.items():
+            if resolved in info.get("sub_models", {}).values():
+                return resolved, prov
+        return resolved, "claude"
+    return None, None
 
 LOG_FILE = os.path.join(SCRIPT_DIR, "bot.log")
 logging.basicConfig(
