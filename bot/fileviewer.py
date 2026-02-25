@@ -2417,15 +2417,20 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 for k, v in new_settings.items():
                     settings[k] = v
                 update_config("settings", dict(settings))
-                # Apply default_sub_model to state.model
+                # Apply default_model/sub_model to state
                 sub = new_settings.get("default_sub_model")
                 ai = new_settings.get("default_model", "claude")
+                from state import state as _st
+                _st.provider = ai
                 ai_info = AI_MODELS.get(ai)
                 if ai_info and sub:
                     resolved = ai_info["sub_models"].get(sub)
                     if resolved:
-                        from state import state as _st
                         _st.model = resolved
+                    else:
+                        _st.model = None  # use CLI default
+                else:
+                    _st.model = None
                 # Invalidate session (one-time use)
                 _ViewerHandler.settings_session_tokens.pop(session_token, None)
                 # Build and send change notification to Telegram
