@@ -169,6 +169,7 @@ class State:
     pending_question = None
     ai_proc = None
     provider = "claude"
+    _provider_sessions = {}   # {provider: session_id} — per-provider session tracking
     provider_stats = {
         "claude": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
         "codex": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
@@ -190,3 +191,18 @@ class State:
     _viewer_msg_ids = []         # sent viewer link message IDs (for deletion)
 
 state = State()
+
+
+def switch_provider(new_provider):
+    """Save current provider's session and switch to new_provider, restoring its session."""
+    if state.provider == new_provider:
+        return
+    # Save current provider's session
+    if state.session_id:
+        state._provider_sessions[state.provider] = state.session_id
+    # Switch provider
+    state.provider = new_provider
+    # Restore target provider's session (or None for fresh start)
+    state.session_id = state._provider_sessions.get(new_provider)
+    from config import update_config
+    update_config("session_id", state.session_id)

@@ -6,7 +6,7 @@ import sys
 from commands import command
 from i18n import t
 from config import IS_WINDOWS, AI_MODELS, MODEL_ALIASES, resolve_model, settings, log
-from state import state
+from state import state, switch_provider
 from telegram import escape_html, send_html, CHAT_ID
 from tokens import get_global_usage
 
@@ -14,7 +14,9 @@ from tokens import get_global_usage
 @command("/help", aliases=["/start"])
 def handle_help(text):
     session_info = f"<code>{state.session_id[:8]}</code>" if state.session_id else t("status.no_session").split("(")[0].strip()
-    model_info = escape_html(state.model) if state.model else t("model.default_name")
+    _prov_label = AI_MODELS.get(state.provider, {}).get("label", state.provider.title())
+    _model_name = escape_html(state.model) if state.model else t('model.cli_default')
+    model_info = f"{_prov_label} - {_model_name}"
     msg = (
         f"<b>{t('help.title')}</b>\n" + '━'*25 + "\n\n"
         f"<b>{t('help.usage_title')}</b>\n{t('help.usage_body')}\n\n"
@@ -30,7 +32,9 @@ def handle_help(text):
 @command("/status")
 def handle_status(text):
     session_info = f"<code>{state.session_id[:8]}</code>" if state.session_id else t("status.no_session")
-    model_info = f"<code>{escape_html(state.model)}</code>" if state.model else t("model.default_name")
+    _prov_label2 = AI_MODELS.get(state.provider, {}).get("label", state.provider.title())
+    _model_name2 = escape_html(state.model) if state.model else t('model.cli_default')
+    model_info = f"{_prov_label2} - <code>{_model_name2}</code>"
     busy_info = t("status.processing") if state.busy else t("status.idle")
     os_info = f"Windows ({platform.version()})" if IS_WINDOWS else platform.platform()
     msg = (f"<b>{t('status.title')}</b>\n{'━'*25}\n"
@@ -90,9 +94,11 @@ def handle_model(text):
     name = args[0].lower()
     reset_kw = t("model.reset_keywords")
     if isinstance(reset_kw, list) and name in reset_kw:
-        state.model = None
-        state.provider = "claude"
-        send_html(f"<b>{t('model.reset_done')}:</b> {t('model.reset_to')}"); return
+        switch_provider("claude")
+        prov_info = AI_MODELS["claude"]
+        default_sub = prov_info.get("default", "sonnet")
+        state.model = prov_info["sub_models"].get(default_sub)
+        send_html(f"<b>{t('model.reset_done')}:</b> Claude - <code>{escape_html(state.model)}</code>"); return
     # Two-part command: /model [provider] [model]
     if name in AI_MODELS and len(args) >= 2:
         model_arg = args[1].lower()
@@ -100,21 +106,24 @@ def handle_model(text):
         # Try sub_model alias within this provider
         resolved = prov_info.get("sub_models", {}).get(model_arg)
         if resolved:
-            state.provider = name
+            switch_provider(name)
             state.model = resolved
         else:
             # Try as raw model name
-            state.provider = name
+            switch_provider(name)
             state.model = model_arg
             resolved = model_arg
         label = prov_info.get("label", name.title())
         send_html(f"<b>{t('model.changed')}:</b> {label} - <code>{escape_html(resolved)}</code>"); return
     # Provider-level switch: /model codex, /model gemini, /model claude
     if name in AI_MODELS:
-        state.provider = name
-        state.model = None
-        label = AI_MODELS[name].get("label", name.title())
-        send_html(f"<b>{t('model.changed')}:</b> {label} ({t('model.cli_default')})"); return
+        switch_provider(name)
+        prov_info = AI_MODELS[name]
+        default_sub = prov_info.get("default")
+        state.model = prov_info["sub_models"].get(default_sub) if default_sub else None
+        label = prov_info.get("label", name.title())
+        model_display = escape_html(state.model) if state.model else t('model.cli_default')
+        send_html(f"<b>{t('model.changed')}:</b> {label} - <code>{model_display}</code>"); return
     # Resolve across all providers
     resolved, provider = resolve_model(name)
     if not resolved:
@@ -133,7 +142,7 @@ def handle_model(text):
             aliases = ", ".join(sorted(all_aliases))
             send_html(t("error.unknown_model", name=f"<code>{escape_html(name)}</code>", aliases=escape_html(aliases))); return
     state.model = resolved
-    state.provider = provider
+    switch_provider(provider)
     provider_label = AI_MODELS.get(provider, {}).get("label", provider)
     send_html(f"<b>{t('model.changed')}:</b> {provider_label} - <code>{escape_html(resolved)}</code>")
 

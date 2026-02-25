@@ -174,10 +174,11 @@ def _run_message(text):
                      provider_label,
                      len(output) if output else 0, new_sid, bool(questions))
 
-            if new_sid and not state.session_id:
+            if new_sid and new_sid != state.session_id:
                 state.session_id = new_sid
+                state._provider_sessions[state.provider] = new_sid
                 _save_session_id(new_sid)
-                log.info("Auto-connected to session: %s", new_sid)
+                log.info("Session updated: %s (%s)", new_sid, state.provider)
 
             active_sid = state.session_id or new_sid or sid
             footer = token_footer()
@@ -696,12 +697,20 @@ def _apply_default_model():
     """Apply default_sub_model from settings to state.model at startup."""
     if state.model:
         return  # session already has a model set
+    from state import switch_provider
     sub = config.settings.get("default_sub_model")
     ai = config.settings.get("default_model", "claude")
-    state.provider = ai
+    switch_provider(ai)
     ai_info = config.AI_MODELS.get(ai)
-    if ai_info and sub:
-        resolved = ai_info["sub_models"].get(sub)
+    if ai_info:
+        # User-configured sub_model takes priority, then provider default
+        resolved = None
+        if sub:
+            resolved = ai_info["sub_models"].get(sub)
+        if not resolved:
+            default_sub = ai_info.get("default")
+            if default_sub:
+                resolved = ai_info["sub_models"].get(default_sub)
         if resolved:
             state.model = resolved
             config.log.info("Default model applied: %s (%s)", resolved, ai)

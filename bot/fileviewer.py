@@ -2420,8 +2420,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 # Apply default_model/sub_model to state
                 sub = new_settings.get("default_sub_model")
                 ai = new_settings.get("default_model", "claude")
-                from state import state as _st
-                _st.provider = ai
+                from state import state as _st, switch_provider
+                switch_provider(ai)
                 ai_info = AI_MODELS.get(ai)
                 if ai_info and sub:
                     resolved = ai_info["sub_models"].get(sub)

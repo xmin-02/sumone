@@ -35,6 +35,7 @@ def handle_session(text):
 
 @command("/clear", aliases=["/new"])
 def handle_clear(text):
+    state._provider_sessions.pop(state.provider, None)
     state.session_id = None; state.selecting = False
     state.answering = False; state.pending_question = None
     _save_session_id(None)

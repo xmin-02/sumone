@@ -44,6 +44,7 @@ AI_MODELS = {
     "claude": {
         "label": "Claude",
         "cli_cmd": "claude",
+        "default": "sonnet",
         "sub_models": {
             "haiku": "claude-haiku-4-5-20251001",
             "sonnet": "claude-sonnet-4-6",
@@ -53,7 +54,9 @@ AI_MODELS = {
     "codex": {
         "label": "Codex",
         "cli_cmd": "codex",
+        "default": "codex",
         "sub_models": {
+            "codex": "gpt-5.3-codex",
             "codex-max": "gpt-5.1-codex-max",
             "codex-mini": "gpt-5.1-codex-mini",
         },
@@ -61,6 +64,7 @@ AI_MODELS = {
     "gemini": {
         "label": "Gemini",
         "cli_cmd": "gemini",
+        "default": "flash",
         "sub_models": {
             "flash": "gemini-2.5-flash",
             "pro": "gemini-2.5-pro",
