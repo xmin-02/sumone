@@ -18,7 +18,7 @@ BOT_TOKEN = _config["bot_token"]
 CHAT_ID = str(_config["chat_id"])
 WORK_DIR = _config.get("work_dir", os.path.expanduser("~"))
 LANG = _config.get("lang", "ko")
-GITHUB_REPO = _config.get("github_repo", "xmin-02/Claude-telegram-bot")
+GITHUB_REPO = _config.get("github_repo", "xmin-02/sumone")
 REMOTE_BOTS = _config.get("remote_bots", [])
 
 DEFAULT_SETTINGS = {
