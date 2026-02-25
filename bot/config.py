@@ -54,8 +54,8 @@ AI_MODELS = {
         "label": "Codex",
         "cli_cmd": "codex",
         "sub_models": {
-            "o4-mini": "o4-mini",
-            "o3": "o3",
+            "codex-max": "gpt-5.1-codex-max",
+            "codex-mini": "gpt-5.1-codex-mini",
         },
     },
     "gemini": {

@@ -516,8 +516,8 @@ _runner_cache = {}
 
 
 def get_runner(callbacks=None):
-    """Return the appropriate Runner based on settings.default_model."""
-    ai = settings.get("default_model", "claude")
+    """Return the appropriate Runner based on state.provider."""
+    ai = state.provider or settings.get("default_model", "claude")
 
     cached = _runner_cache.get(ai)
     if cached and cached.cb is callbacks:

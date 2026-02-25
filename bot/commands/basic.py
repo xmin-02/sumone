@@ -84,7 +84,7 @@ def handle_model(text):
         send_html(
             f"<b>{t('model.current')}:</b> <code>{escape_html(current)}</code> ({provider_label})\n{'━'*25}\n"
             f"<b>{t('model.usage')}:</b> /model [name]\n<b>{t('model.aliases')}:</b> {escape_html(aliases)}\n"
-            f"<b>{t('model.examples')}:</b>\n  /model opus\n  /model sonnet\n  /model o4-mini\n  /model flash\n"
+            f"<b>{t('model.examples')}:</b>\n  /model opus\n  /model sonnet\n  /model codex\n  /model flash\n"
             f"  /model {t('model.restore_default')}")
         return
     name = parts[1].strip().lower()
@@ -93,18 +93,26 @@ def handle_model(text):
         state.model = None
         state.provider = "claude"
         send_html(f"<b>{t('model.reset_done')}:</b> {t('model.reset_to')}"); return
+    # Provider-level switch: /model codex, /model gemini, /model claude
+    if name in AI_MODELS:
+        state.provider = name
+        state.model = None  # use CLI default model
+        label = AI_MODELS[name].get("label", name.title())
+        send_html(f"<b>{t('model.changed')}:</b> {label} ({t('model.default_name')})"); return
     # Resolve across all providers
     resolved, provider = resolve_model(name)
     if not resolved:
         # Allow raw model name with known prefixes
         if name.startswith("claude-"):
             resolved, provider = name, "claude"
-        elif name.startswith(("o3", "o4")):
+        elif name.startswith(("gpt-", "o3", "o4")):
             resolved, provider = name, "codex"
         elif name.startswith("gemini-"):
             resolved, provider = name, "gemini"
         else:
             all_aliases = set(MODEL_ALIASES.keys())
+            for prov_name in AI_MODELS:
+                all_aliases.add(prov_name)
             for info in AI_MODELS.values():
                 all_aliases.update(info.get("sub_models", {}).keys())
             aliases = ", ".join(sorted(all_aliases))
