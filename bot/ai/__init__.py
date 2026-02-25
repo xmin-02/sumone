@@ -524,18 +524,9 @@ def get_runner(callbacks=None):
         return cached
 
     from ai.claude import ClaudeRunner
-    runners = {"claude": ClaudeRunner}
-
-    try:
-        from ai.codex import CodexRunner
-        runners["codex"] = CodexRunner
-    except ImportError:
-        pass
-    try:
-        from ai.gemini import GeminiRunner
-        runners["gemini"] = GeminiRunner
-    except ImportError:
-        pass
+    from ai.codex import CodexRunner
+    from ai.gemini import GeminiRunner
+    runners = {"claude": ClaudeRunner, "codex": CodexRunner, "gemini": GeminiRunner}
 
     runner_cls = runners.get(ai, ClaudeRunner)
     runner = runner_cls(callbacks=callbacks)
