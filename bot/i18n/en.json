@@ -72,7 +72,8 @@
     "input_tokens": "Input tokens",
     "output_tokens": "Output tokens",
     "total_tokens": "Total tokens",
-    "line": "💰 ${cost} | ⏱ {duration} | 🔄 {turns} turns | 📊 {in_tok}+{out_tok} tokens"
+    "line": "💰 ${cost} | ⏱ {duration} | 🔄 {turns} turns | 📊 {in_tok}+{out_tok} tokens",
+    "provider_title": "Usage by Provider (current session)"
   },
   "cancel": {
     "done": "Cancelled.",

@@ -72,7 +72,8 @@
     "input_tokens": "입력 토큰",
     "output_tokens": "출력 토큰",
     "total_tokens": "총 토큰",
-    "line": "💰 ${cost} | ⏱ {duration} | 🔄 {turns}턴 | 📊 {in_tok}+{out_tok} 토큰"
+    "line": "💰 ${cost} | ⏱ {duration} | 🔄 {turns}턴 | 📊 {in_tok}+{out_tok} 토큰",
+    "provider_title": "제공자별 사용량 (현재 세션)"
   },
   "cancel": {
     "done": "취소됨.",

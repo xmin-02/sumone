@@ -436,7 +436,7 @@ class BaseRunner:
             "user": user_message[:1000],
             "output": (output or "")[:2000],
             "files_modified": modified,
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         })
         data["exchanges"] = data["exchanges"][-20:]
 
@@ -457,7 +457,7 @@ class BaseRunner:
         log_path = os.path.expanduser("~/.sumone/token_log.jsonl")
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
         entry = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "provider": self.PROVIDER,
             "model": state.model or "",
             "in": parsed.tokens_in,
