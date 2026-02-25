@@ -50,6 +50,7 @@
     "reset_to": "default (sonnet)",
     "changed": "Model changed",
     "default_name": "default (sonnet)",
+    "cli_default": "CLI default",
     "reset_keywords": ["default", "reset"]
   },
   "status": {

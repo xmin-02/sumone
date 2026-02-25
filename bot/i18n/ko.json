@@ -50,6 +50,7 @@
     "reset_to": "기본값 (sonnet)",
     "changed": "모델 변경됨",
     "default_name": "기본값 (sonnet)",
+    "cli_default": "기본 모델",
     "reset_keywords": ["default", "reset", "기본", "기본값"]
   },
   "status": {

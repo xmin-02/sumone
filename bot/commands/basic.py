@@ -72,37 +72,60 @@ def handle_cost(text):
 
 @command("/model")
 def handle_model(text):
-    parts = text.split(maxsplit=1)
-    if len(parts) < 2 or parts[1].strip() == "":
-        current = state.model or t("model.default_name")
+    args = text.split()[1:]  # everything after /model
+    if not args:
         provider_label = AI_MODELS.get(state.provider, {}).get("label", state.provider)
-        # Collect all aliases from all providers
+        if state.model:
+            current_display = f"{provider_label} - <code>{escape_html(state.model)}</code>"
+        else:
+            current_display = f"{provider_label} ({t('model.cli_default')})"
+        # Collect all aliases
         all_aliases = set(MODEL_ALIASES.keys())
+        for prov_name in AI_MODELS:
+            all_aliases.add(prov_name)
         for info in AI_MODELS.values():
             all_aliases.update(info.get("sub_models", {}).keys())
         aliases = ", ".join(sorted(all_aliases))
         send_html(
-            f"<b>{t('model.current')}:</b> <code>{escape_html(current)}</code> ({provider_label})\n{'━'*25}\n"
-            f"<b>{t('model.usage')}:</b> /model [name]\n<b>{t('model.aliases')}:</b> {escape_html(aliases)}\n"
-            f"<b>{t('model.examples')}:</b>\n  /model opus\n  /model sonnet\n  /model codex\n  /model flash\n"
+            f"<b>{t('model.current')}:</b> {current_display}\n{'━'*25}\n"
+            f"<b>{t('model.usage')}:</b> /model [name] or /model [provider] [model]\n"
+            f"<b>{t('model.aliases')}:</b> {escape_html(aliases)}\n"
+            f"<b>{t('model.examples')}:</b>\n"
+            f"  /model claude\n  /model codex\n  /model gemini\n"
+            f"  /model claude opus\n  /model codex gpt-5.3-codex\n  /model gemini flash\n"
             f"  /model {t('model.restore_default')}")
         return
-    name = parts[1].strip().lower()
+    name = args[0].lower()
     reset_kw = t("model.reset_keywords")
     if isinstance(reset_kw, list) and name in reset_kw:
         state.model = None
         state.provider = "claude"
         send_html(f"<b>{t('model.reset_done')}:</b> {t('model.reset_to')}"); return
+    # Two-part command: /model [provider] [model]
+    if name in AI_MODELS and len(args) >= 2:
+        model_arg = args[1].lower()
+        prov_info = AI_MODELS[name]
+        # Try sub_model alias within this provider
+        resolved = prov_info.get("sub_models", {}).get(model_arg)
+        if resolved:
+            state.provider = name
+            state.model = resolved
+        else:
+            # Try as raw model name
+            state.provider = name
+            state.model = model_arg
+            resolved = model_arg
+        label = prov_info.get("label", name.title())
+        send_html(f"<b>{t('model.changed')}:</b> {label} - <code>{escape_html(resolved)}</code>"); return
     # Provider-level switch: /model codex, /model gemini, /model claude
     if name in AI_MODELS:
         state.provider = name
-        state.model = None  # use CLI default model
+        state.model = None
         label = AI_MODELS[name].get("label", name.title())
-        send_html(f"<b>{t('model.changed')}:</b> {label} ({t('model.default_name')})"); return
+        send_html(f"<b>{t('model.changed')}:</b> {label} ({t('model.cli_default')})"); return
     # Resolve across all providers
     resolved, provider = resolve_model(name)
     if not resolved:
-        # Allow raw model name with known prefixes
         if name.startswith("claude-"):
             resolved, provider = name, "claude"
         elif name.startswith(("gpt-", "o3", "o4")):
@@ -120,7 +143,7 @@ def handle_model(text):
     state.model = resolved
     state.provider = provider
     provider_label = AI_MODELS.get(provider, {}).get("label", provider)
-    send_html(f"<b>{t('model.changed')}:</b> <code>{escape_html(resolved)}</code> ({provider_label})")
+    send_html(f"<b>{t('model.changed')}:</b> {provider_label} - <code>{escape_html(resolved)}</code>")
 
 
 @command("/cancel")
