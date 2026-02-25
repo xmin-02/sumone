@@ -165,7 +165,8 @@
     "tap_toggle": "항목을 눌러 전환",
     "token_range": "토큰 표시 범위",
     "close": "닫기",
-    "token_prefix": "토큰"
+    "token_prefix": "토큰",
+    "open_web": "설정 페이지 열기"
   },
   "help": {
     "title": "Claude Code Telegram Bot",

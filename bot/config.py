@@ -26,9 +26,30 @@ DEFAULT_SETTINGS = {
     "show_status": True,
     "show_global_cost": True,
     "token_display": "month",
-    "show_remote_tokens": False,
+    "show_remote_tokens": True,
+    "theme": "system",
+    "snapshot_ttl_days": 7,
+    "token_ttl": "session",
+    "default_model": "claude",
+    "default_sub_model": "sonnet",
+    "auto_viewer_link": True,
+    "viewer_link_fixed": False,
+    "show_typing": True,
+    "settings_timeout_minutes": 15,
 }
-TOKEN_PERIODS = ["session", "day", "month", "year", "total"]
+TOKEN_PERIODS = ["none", "session", "day", "month", "year", "total"]
+TOKEN_TTL_OPTIONS = ["session", "unlimited"]  # + integer 1-60 (minutes)
+THEME_OPTIONS = ["system", "dark", "light"]
+AI_MODELS = {
+    "claude": {
+        "label": "Claude",
+        "sub_models": {
+            "haiku": "claude-haiku-4-5-20251001",
+            "sonnet": "claude-sonnet-4-6",
+            "opus": "claude-opus-4-6",
+        },
+    },
+}
 settings = {**DEFAULT_SETTINGS, **_config.get("settings", {})}
 
 MAX_MSG_LEN = 3900

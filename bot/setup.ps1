@@ -195,7 +195,8 @@ function Install-Bot {
         @("bot/commands/update.py",          "commands/update.py"),
         @("bot/commands/total_tokens.py",    "commands/total_tokens.py"),
         @("bot/commands/skills.py",          "commands/skills.py"),
-        @("bot/commands/session_cmd.py",     "commands/session_cmd.py")
+        @("bot/commands/session_cmd.py",     "commands/session_cmd.py"),
+        @("bot/onboard.py",                 "onboard.py")
     )
 
     foreach ($entry in $files) {
@@ -337,6 +338,37 @@ function Setup-TokenAccess {
     }
 }
 
+# --- Run Onboarding ---
+function Run-Onboarding {
+    Write-Host ""
+    Write-Info "Running initial setup wizard..."
+    try {
+        & $script:PYTHON (Join-Path $script:INSTALL_DIR "onboard.py") $script:LANG
+    } catch {
+        Write-Warn "Onboarding skipped"
+    }
+}
+
+# --- Register 'sumone' command ---
+function Register-SumoneCommand {
+    Write-Info "Registering 'sumone' command..."
+    $pythonPath = (Get-Command $script:PYTHON -ErrorAction SilentlyContinue).Source
+    if (-not $pythonPath) { $pythonPath = $script:PYTHON }
+
+    $batContent = "@echo off`r`n`"$pythonPath`" `"$($script:BOT_PATH)`" %*"
+    $batPath = Join-Path $script:INSTALL_DIR "sumone.bat"
+    [System.IO.File]::WriteAllText($batPath, $batContent, [System.Text.Encoding]::ASCII)
+
+    # Add install dir to user PATH if not already present
+    $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($currentPath -notlike "*$($script:INSTALL_DIR)*") {
+        [Environment]::SetEnvironmentVariable("Path", "$currentPath;$($script:INSTALL_DIR)", "User")
+        Write-Ok "'sumone' command registered (restart terminal to use)"
+    } else {
+        Write-Ok "'sumone' command registered"
+    }
+}
+
 # --- Auto-start ---
 function Setup-AutoStart {
     Write-Info "Registering Windows Task Scheduler..."
@@ -395,6 +427,8 @@ function Main {
     Install-Bot
     Test-BotToken
     Set-BotPhoto
+    Run-Onboarding
+    Register-SumoneCommand
     Setup-TokenAccess
     Setup-AutoStart
     Show-UninstallInfo

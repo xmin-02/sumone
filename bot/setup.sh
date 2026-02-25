@@ -190,6 +190,7 @@ install_bot() {
         "bot/commands/total_tokens.py:commands/total_tokens.py"
         "bot/commands/skills.py:commands/skills.py"
         "bot/commands/session_cmd.py:commands/session_cmd.py"
+        "bot/onboard.py:onboard.py"
     )
 
     for entry in "${files[@]}"; do
@@ -420,6 +421,40 @@ setup_autostart_wsl() {
     ok "WSL auto-start configured (.bashrc)"
 }
 
+# --- Run Onboarding ---
+run_onboarding() {
+    echo ""
+    info "Running initial setup wizard..."
+    $PYTHON "$INSTALL_DIR/onboard.py" "$LANG" || warn "Onboarding skipped"
+}
+
+# --- Register 'sumone' command ---
+register_sumone_command() {
+    info "Registering 'sumone' command..."
+    local bin_dir="$HOME/.local/bin"
+    mkdir -p "$bin_dir"
+    cat > "$bin_dir/sumone" << CMDEOF
+#!/usr/bin/env bash
+$PYTHON "$BOT_PATH" "\$@"
+CMDEOF
+    chmod +x "$bin_dir/sumone"
+
+    # Ensure ~/.local/bin is in PATH
+    local rc_file=""
+    if [[ -f "$HOME/.zshrc" ]]; then
+        rc_file="$HOME/.zshrc"
+    elif [[ -f "$HOME/.bashrc" ]]; then
+        rc_file="$HOME/.bashrc"
+    fi
+
+    if [[ -n "$rc_file" ]] && ! grep -q '\.local/bin' "$rc_file" 2>/dev/null; then
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$rc_file"
+        ok "'sumone' command registered (restart terminal or run: source $rc_file)"
+    else
+        ok "'sumone' command registered ($bin_dir/sumone)"
+    fi
+}
+
 # --- Uninstall info ---
 print_uninstall() {
     echo ""
@@ -458,6 +493,8 @@ main() {
     install_bot
     verify_token
     set_bot_photo
+    run_onboarding
+    register_sumone_command
     setup_token_access
 
     case "$OS" in

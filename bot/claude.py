@@ -6,7 +6,8 @@ import threading
 import time
 
 import i18n
-from config import IS_WINDOWS, WORK_DIR, settings, log
+import config as _config
+from config import IS_WINDOWS, settings, log
 from state import state
 from telegram import escape_html, md_to_telegram_html, split_message, send_html, send_typing, tg_api, CHAT_ID
 
@@ -38,9 +39,15 @@ def _claude_env():
             env["PATH"] = py_scripts + ";" + env.get("PATH", "")
     else:
         env["HOME"] = os.path.expanduser("~")
-        env["PATH"] = os.path.expanduser("~/.local/bin") + ":/usr/local/bin:/usr/bin:/bin"
-        goroot = os.path.join(WORK_DIR, "goroot")
-        gopath = os.path.join(WORK_DIR, "gopath")
+        extra = ":".join(p for p in [
+            os.path.expanduser("~/.local/bin"),
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+        ] if os.path.isdir(p))
+        env["PATH"] = extra + ":/usr/bin:/bin:" + env.get("PATH", "")
+        goroot = os.path.join(_config.WORK_DIR, "goroot")
+        gopath = os.path.join(_config.WORK_DIR, "gopath")
         if os.path.isdir(goroot):
             env["GOROOT"] = goroot
             env["PATH"] = f"{gopath}/bin:{goroot}/bin:{env['PATH']}"
@@ -89,7 +96,7 @@ def _parse_deleted_paths(command, cwd=None):
     import shlex
     if not command or not command.strip():
         return []
-    cwd = cwd or WORK_DIR
+    cwd = cwd or _config.WORK_DIR
     paths = []
 
     # Split by && ; || to handle chained commands
@@ -169,14 +176,19 @@ def _send_file_viewer_link(had_new_files):
     """If files were modified in this run and file viewer is active, send a link."""
     if not had_new_files or not state.file_viewer_url:
         return
+    if not settings.get("auto_viewer_link", True):
+        return
     try:
-        from fileviewer import generate_token
+        from fileviewer import generate_token, get_or_create_fixed_token
         from telegram import delete_msg
         # Delete previous viewer link messages
         for mid in state._viewer_msg_ids:
             delete_msg(mid)
         state._viewer_msg_ids.clear()
-        token = generate_token()
+        if settings.get("viewer_link_fixed", False):
+            token = get_or_create_fixed_token()
+        else:
+            token = generate_token()
         url = f"{state.file_viewer_url}?token={token}"
         count = len(set(e["path"] for e in state.modified_files))
         label = i18n.t("file_viewer.link", count=count)
@@ -214,7 +226,7 @@ def run_claude(message, session_id=None):
     try:
         popen_kwargs = dict(
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            cwd=WORK_DIR, env=_claude_env(),
+            cwd=_config.WORK_DIR, env=_claude_env(),
         )
         if IS_WINDOWS:
             popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -270,7 +282,7 @@ def run_claude(message, session_id=None):
                                 pending_edit_snapshots.append(fp)
                         elif t_name == "Bash":
                             bash_cmd = block.get("input", {}).get("command", "")
-                            deleted = _parse_deleted_paths(bash_cmd, cwd=WORK_DIR)
+                            deleted = _parse_deleted_paths(bash_cmd, cwd=_config.WORK_DIR)
                             if deleted:
                                 from state import add_modified_file
                                 for dp in deleted:

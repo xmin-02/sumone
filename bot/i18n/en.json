@@ -165,7 +165,8 @@
     "tap_toggle": "Tap to toggle",
     "token_range": "Token display range",
     "close": "Close",
-    "token_prefix": "Tokens"
+    "token_prefix": "Tokens",
+    "open_web": "Open Settings Page"
   },
   "help": {
     "title": "Claude Code Telegram Bot",

@@ -94,6 +94,8 @@ def get_monthly_tokens():
 def token_footer():
     from i18n import t
     period = settings.get("token_display", "month")
+    if period == "none":
+        return ""
     count = get_tokens(period)
     labels = {"session": "session", "day": time.strftime("%Y-%m-%d"),
               "month": time.strftime("%Y-%m"), "year": time.strftime("%Y"), "total": "total"}

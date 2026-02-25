@@ -66,19 +66,28 @@ def get_current_run_id():
     return _current_run_id
 
 
-_SNAPSHOT_TTL_DAYS = 7
 _last_cleanup_ts = 0.0
 
 
+def _get_snapshot_ttl_days():
+    """Read snapshot TTL from settings, fallback to 7."""
+    from config import settings as _settings
+    try:
+        return int(_settings.get("snapshot_ttl_days", 7))
+    except (ValueError, TypeError):
+        return 7
+
+
 def cleanup_old_snapshots():
-    """Delete snapshot files older than _SNAPSHOT_TTL_DAYS. Keeps history entries but clears snapshot ref."""
+    """Delete snapshot files older than configured TTL. Keeps history entries but clears snapshot ref."""
     global _last_cleanup_ts
     now = time.time()
     # Run at most once per hour
     if now - _last_cleanup_ts < 3600:
         return
     _last_cleanup_ts = now
-    cutoff = datetime.now().timestamp() - _SNAPSHOT_TTL_DAYS * 86400
+    ttl_days = _get_snapshot_ttl_days()
+    cutoff = datetime.now().timestamp() - ttl_days * 86400
     changed = False
     for entry in state.modified_files:
         snap = entry.get("snapshot")
@@ -102,7 +111,7 @@ def cleanup_old_snapshots():
             changed = True
     if changed:
         save_modified_files(state.modified_files)
-        log.info("Snapshot cleanup complete (TTL=%d days)", _SNAPSHOT_TTL_DAYS)
+        log.info("Snapshot cleanup complete (TTL=%d days)", ttl_days)
 
 
 def add_modified_file(path, content=None, op="write"):

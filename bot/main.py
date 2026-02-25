@@ -61,29 +61,30 @@ def _run_message(text):
     # Animated typing indicator
     typing_id = [None]
     typing_stop = threading.Event()
-    r = send_html(f"<b>{i18n.t('typing.label')} \u00b7</b>\n<i>{i18n.t('typing.cancel_hint')}</i>")
-    try:
-        typing_id[0] = r
-    except Exception:
-        pass
+    if settings.get("show_typing", True):
+        r = send_html(f"<b>{i18n.t('typing.label')} \u00b7</b>\n<i>{i18n.t('typing.cancel_hint')}</i>")
+        try:
+            typing_id[0] = r
+        except Exception:
+            pass
 
-    def _typing_anim():
-        dots = ["\u00b7", "\u00b7\u00b7", "\u00b7\u00b7\u00b7"]
-        idx = 0
-        while not typing_stop.is_set():
-            typing_stop.wait(0.1)
-            if typing_stop.is_set():
-                break
-            idx = (idx + 1) % len(dots)
-            if typing_id[0]:
-                tg_api("editMessageText", {
-                    "chat_id": CHAT_ID, "message_id": typing_id[0],
-                    "text": f"<b>{i18n.t('typing.label')} {dots[idx]}</b>\n<i>{i18n.t('typing.cancel_hint')}</i>",
-                    "parse_mode": "HTML",
-                })
+        def _typing_anim():
+            dots = ["\u00b7", "\u00b7\u00b7", "\u00b7\u00b7\u00b7"]
+            idx = 0
+            while not typing_stop.is_set():
+                typing_stop.wait(0.1)
+                if typing_stop.is_set():
+                    break
+                idx = (idx + 1) % len(dots)
+                if typing_id[0]:
+                    tg_api("editMessageText", {
+                        "chat_id": CHAT_ID, "message_id": typing_id[0],
+                        "text": f"<b>{i18n.t('typing.label')} {dots[idx]}</b>\n<i>{i18n.t('typing.cancel_hint')}</i>",
+                        "parse_mode": "HTML",
+                    })
 
-    threading.Thread(target=_typing_anim, daemon=True).start()
-    send_typing()
+        threading.Thread(target=_typing_anim, daemon=True).start()
+        send_typing()
     sid = state.session_id
 
     def _run():
@@ -611,9 +612,24 @@ def _bootstrap_files():
         log.warning("Bootstrap failed (non-fatal): %s", e)
 
 
+def _apply_default_model():
+    """Apply default_sub_model from settings to state.model at startup."""
+    if state.model:
+        return  # session already has a model set
+    sub = config.settings.get("default_sub_model")
+    ai = config.settings.get("default_model", "claude")
+    ai_info = config.AI_MODELS.get(ai)
+    if ai_info and sub:
+        resolved = ai_info["sub_models"].get(sub)
+        if resolved:
+            state.model = resolved
+            config.log.info("Default model applied: %s", resolved)
+
+
 def main():
     _bootstrap_files()
     i18n.load(config.LANG)
+    _apply_default_model()
 
     def sig_handler(signum, frame):
         log.info("Signal %s, exiting.", signum)
