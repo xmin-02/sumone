@@ -165,6 +165,10 @@ def handle_update_bot(text):
         if added:
             summary.append(f"New: {len(added)}")
         update_config("last_update", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        # Migrate github_repo to new repo name on first successful update
+        _new_repo = "xmin-02/sumone"
+        if GITHUB_REPO != _new_repo:
+            update_config("github_repo", _new_repo)
         send_html(
             f"<b>{t('update.complete')}</b> ({', '.join(summary)} files)\n"
             f"{'━'*25}\n{escape_html(patch_notes)}\n{'━'*25}\n"
