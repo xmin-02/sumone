@@ -79,17 +79,9 @@ def handle_model(text):
             current_display = f"{provider_label} - <code>{escape_html(state.model)}</code>"
         else:
             current_display = f"{provider_label} ({t('model.cli_default')})"
-        # Collect all aliases
-        all_aliases = set(MODEL_ALIASES.keys())
-        for prov_name in AI_MODELS:
-            all_aliases.add(prov_name)
-        for info in AI_MODELS.values():
-            all_aliases.update(info.get("sub_models", {}).keys())
-        aliases = ", ".join(sorted(all_aliases))
         send_html(
             f"<b>{t('model.current')}:</b> {current_display}\n{'━'*25}\n"
-            f"<b>{t('model.usage')}:</b> /model [name] or /model [provider] [model]\n"
-            f"<b>{t('model.aliases')}:</b> {escape_html(aliases)}\n"
+            f"<b>{t('model.usage')}:</b> /model [provider] [model]\n"
             f"<b>{t('model.examples')}:</b>\n"
             f"  /model claude\n  /model codex\n  /model gemini\n"
             f"  /model claude opus\n  /model codex gpt-5.3-codex\n  /model gemini flash\n"
