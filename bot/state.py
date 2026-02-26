@@ -172,6 +172,7 @@ class State:
     _provider_sessions = _config.get("provider_sessions", {})   # {provider: session_id}
     _provider_models = _config.get("provider_models", {})     # {provider: model}
     _run_gen = 0              # generation counter — bumped by /cancel to detect stale runs
+    cli_status = {}           # {provider: bool} — True if CLI installed & runnable
     provider_stats = {
         "claude": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
         "codex": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},

@@ -44,6 +44,12 @@ from commands.total_tokens import handle_token_input
 
 def handle_message(text):
     """Send user text to Claude CLI and deliver the response."""
+    # Route to connect flow if active
+    from ai.connect import is_connect_active, handle_connect_response
+    if is_connect_active():
+        handle_connect_response(text)
+        return
+
     with state.lock:
         if state.busy:
             state.message_queue.append(text)
@@ -237,6 +243,15 @@ def process_update(update):
         if cb_chat != CHAT_ID:
             return
         data = cb.get("data", "")
+        # Route connect: callbacks to connect flow
+        if data.startswith("connect:"):
+            from ai.connect import handle_connect_callback
+            from telegram import tg_api as _tga
+            cb_id = cb["id"]
+            payload = data[len("connect:"):]
+            if handle_connect_callback(payload):
+                _tga("answerCallbackQuery", {"callback_query_id": cb_id})
+            return
         handler = dispatch_callback(data)
         if handler:
             msg_id = cb.get("message", {}).get("message_id")
@@ -697,6 +712,19 @@ def _bootstrap_files():
         log.warning("Bootstrap failed (non-fatal): %s", e)
 
 
+def _detect_cli_status():
+    """Detect which AI CLIs are installed. Runs at startup and caches in state.cli_status."""
+    import subprocess as _sp
+    for provider, info in config.AI_MODELS.items():
+        cmd = info.get("cli_cmd", provider)
+        try:
+            r = _sp.run([cmd, "--version"], capture_output=True, timeout=5)
+            state.cli_status[provider] = (r.returncode == 0)
+        except Exception:
+            state.cli_status[provider] = False
+    log.info("CLI status: %s", state.cli_status)
+
+
 def _apply_default_model():
     """Apply default_sub_model from settings to state.model at startup."""
     if state.model:
@@ -738,6 +766,7 @@ def main():
     _bootstrap_files()
     i18n.load(config.LANG)
     _apply_default_model()
+    _detect_cli_status()
 
     def sig_handler(signum, frame):
         log.info("Signal %s, exiting.", signum)

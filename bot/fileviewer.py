@@ -1626,6 +1626,7 @@ def _page_settings(session_token):
     settings_json = _json.dumps(s)
     timeout_seconds = int(s.get("settings_timeout_minutes", 15)) * 60
     ai_models_json = _json.dumps(AI_MODELS)
+    cli_status_json = _json.dumps(state.cli_status)
     token_periods_json = _json.dumps(TOKEN_PERIODS)
     theme_options_json = _json.dumps(THEME_OPTIONS)
 
@@ -1657,6 +1658,28 @@ def _page_settings(session_token):
 .setting-number {{ background: var(--bg-base); border: 1px solid var(--border-default); color: var(--text-primary);
   padding: 6px 10px; border-radius: var(--radius-md); font-size: var(--text-sm); width: 80px; text-align: center; outline: none; }}
 .setting-number:focus {{ border-color: var(--accent-blue); }}
+/* AI Provider accordion */
+.ai-provider {{ border: 1px solid var(--border-muted); border-radius: var(--radius-md); margin-bottom: 8px; overflow: hidden; }}
+.ai-provider-header {{ display: flex; align-items: center; padding: 12px 16px; background: var(--bg-raised); cursor: pointer; user-select: none; gap: 10px; }}
+.ai-provider-header.disconnected {{ cursor: default; }}
+.ai-status-dot {{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }}
+.ai-status-dot.connected {{ background: #4caf50; }}
+.ai-status-dot.disconnected {{ background: #666; }}
+.ai-provider-name {{ flex: 1; font-weight: 500; font-size: var(--text-sm); color: var(--text-primary); }}
+.ai-provider-arrow {{ font-size: 10px; color: var(--text-secondary); transition: transform 0.2s; }}
+.ai-provider.open .ai-provider-arrow {{ transform: rotate(180deg); }}
+.ai-connect-btn {{ padding: 5px 12px; border-radius: var(--radius-md); border: 1px solid var(--accent-blue); background: transparent;
+  color: var(--accent-blue); font-size: var(--text-xs); cursor: pointer; }}
+.ai-connect-btn:hover {{ background: var(--accent-blue); color: #fff; }}
+.ai-provider-models {{ display: none; border-top: 1px solid var(--border-muted); }}
+.ai-provider.open .ai-provider-models {{ display: block; }}
+.ai-model-row {{ display: flex; align-items: center; padding: 10px 16px; gap: 12px; border-bottom: 1px solid var(--border-muted); }}
+.ai-model-row:last-child {{ border-bottom: none; }}
+.ai-model-name {{ flex: 1; font-size: var(--text-sm); color: var(--text-secondary); font-family: monospace; }}
+.ai-model-row.active .ai-model-name {{ color: var(--text-primary); font-weight: 500; }}
+.ai-model-btn {{ padding: 5px 12px; border-radius: var(--radius-md); font-size: var(--text-xs); cursor: pointer; border: 1px solid var(--border-default); background: transparent; color: var(--text-secondary); white-space: nowrap; }}
+.ai-model-btn:hover {{ border-color: var(--accent-blue); color: var(--accent-blue); }}
+.ai-model-btn.active {{ background: var(--accent-blue); color: #fff; border-color: var(--accent-blue); cursor: default; }}
 .setting-number::-webkit-inner-spin-button,
 .setting-number::-webkit-outer-spin-button {{ opacity: 1; filter: invert(1); }}
 /* Save button */
@@ -1754,14 +1777,7 @@ def _page_settings(session_token):
 
 <div class="settings-section">
   <h2>\U0001f916 <span data-i18n="s_ai">AI Model</span></h2>
-  <div class="setting-row">
-    <div class="setting-label"><div class="name" data-i18n="s_aimod">Default AI</div><div class="desc" data-i18n="s_aimod_d">AI provider for new sessions</div></div>
-    <div class="setting-control"><select class="setting-select" data-key="default_model" id="sel-model"></select></div>
-  </div>
-  <div class="setting-row">
-    <div class="setting-label"><div class="name" data-i18n="s_sub">Default Sub-Model</div><div class="desc" data-i18n="s_sub_d">Specific model variant</div></div>
-    <div class="setting-control"><select class="setting-select" data-key="default_sub_model" id="sel-sub-model"></select></div>
-  </div>
+  <div id="ai-providers"></div>
 </div>
 
 <div class="settings-section">
@@ -1785,6 +1801,7 @@ def _page_settings(session_token):
 <script>
 var _settings = {settings_json};
 var _aiModels = {ai_models_json};
+var _cliStatus = {cli_status_json};
 var _tokenPeriods = {token_periods_json};
 var _themeOptions = {theme_options_json};
 var _sessionToken = '{session_token}';
@@ -1863,17 +1880,8 @@ function initSettings() {{
     markDirty();
   }});
   ttlInput.addEventListener('change', markDirty);
-  // AI Models
-  var mSel = document.getElementById('sel-model');
-  Object.keys(_aiModels).forEach(function(k) {{
-    mSel.innerHTML += '<option value="'+k+'">'+_aiModels[k].label+'</option>';
-  }});
-  mSel.value = _settings.default_model || 'claude';
-  mSel.addEventListener('change', function() {{ updateSubModels(); markDirty(); }});
-  updateSubModels();
-  var smSel = document.getElementById('sel-sub-model');
-  smSel.value = _settings.default_sub_model || 'sonnet';
-  smSel.addEventListener('change', markDirty);
+  // AI Provider accordion
+  _buildAiProviders();
   // Work directory
   var wdi = document.getElementById('workdir-input');
   if (wdi) {{ wdi.value = _settings.work_dir || ''; wdi.addEventListener('change', markDirty); }}
@@ -1881,17 +1889,72 @@ function initSettings() {{
   var sti = document.getElementById('stimeout-input');
   if (sti) {{ sti.value = _settings.settings_timeout_minutes || 15; sti.addEventListener('change', markDirty); }}
 }}
-function updateSubModels() {{
-  var model = document.getElementById('sel-model').value;
-  var smSel = document.getElementById('sel-sub-model');
-  smSel.innerHTML = '';
-  var info = _aiModels[model];
-  if (info && info.sub_models) {{
-    Object.keys(info.sub_models).forEach(function(k) {{
-      var mid = info.sub_models[k];
-      smSel.innerHTML += '<option value="'+k+'">'+mid+'</option>';
+function _buildAiProviders() {{
+  var container = document.getElementById('ai-providers');
+  container.innerHTML = '';
+  var activeModel = _settings.default_model || 'claude';
+  var activeSub = _settings.default_sub_model || 'sonnet';
+  Object.keys(_aiModels).forEach(function(provKey) {{
+    var info = _aiModels[provKey];
+    var connected = !!_cliStatus[provKey];
+    var isOpen = (provKey === activeModel);
+    var div = document.createElement('div');
+    div.className = 'ai-provider' + (isOpen && connected ? ' open' : '');
+    div.dataset.provider = provKey;
+    // Header
+    var hdr = document.createElement('div');
+    hdr.className = 'ai-provider-header' + (connected ? '' : ' disconnected');
+    var dot = '<span class="ai-status-dot ' + (connected ? 'connected' : 'disconnected') + '"></span>';
+    var name = '<span class="ai-provider-name">' + info.label + '</span>';
+    if (connected) {{
+      var arrow = '<span class="ai-provider-arrow">▼</span>';
+      hdr.innerHTML = dot + name + arrow;
+      hdr.onclick = function() {{ _toggleProvider(div); }};
+    }} else {{
+      var connectBtn = '<button class="ai-connect-btn" onclick="event.stopPropagation();_connectProvider(\''+provKey+'\')" data-i18n="s_ai_connect">연결하기</button>';
+      hdr.innerHTML = dot + name + connectBtn;
+    }}
+    div.appendChild(hdr);
+    // Models panel
+    if (connected && info.sub_models) {{
+      var panel = document.createElement('div');
+      panel.className = 'ai-provider-models';
+      Object.keys(info.sub_models).forEach(function(subKey) {{
+        var modelId = info.sub_models[subKey];
+        var isActive = (provKey === activeModel && subKey === activeSub);
+        var row = document.createElement('div');
+        row.className = 'ai-model-row' + (isActive ? ' active' : '');
+        row.dataset.provider = provKey;
+        row.dataset.sub = subKey;
+        var btnLabel = isActive ? T('s_ai_active') || '설정됨' : T('s_ai_set') || '설정하기';
+        var btnClass = 'ai-model-btn' + (isActive ? ' active' : '');
+        row.innerHTML = '<span class="ai-model-name">'+modelId+'</span>'
+          + '<button class="'+btnClass+'" '+(isActive?'disabled':'')+' onclick="_setModel(\''+provKey+'\',\''+subKey+'\')">'+btnLabel+'</button>';
+        panel.appendChild(row);
+      }});
+      div.appendChild(panel);
+    }}
+    container.appendChild(div);
+  }});
+}}
+function _toggleProvider(div) {{
+  var wasOpen = div.classList.contains('open');
+  document.querySelectorAll('.ai-provider').forEach(function(d) {{ d.classList.remove('open'); }});
+  if (!wasOpen) div.classList.add('open');
+}}
+function _setModel(provKey, subKey) {{
+  _settings.default_model = provKey;
+  _settings.default_sub_model = subKey;
+  _buildAiProviders();
+  markDirty();
+}}
+function _connectProvider(provKey) {{
+  fetch('/settings-connect/'+_sessionToken+'?provider='+provKey, {{method:'POST'}})
+    .then(function(r) {{ return r.json(); }})
+    .then(function(d) {{
+      if (d.ok) alert((T('s_ai_connect_started')||'연결을 시작합니다. 텔레그램을 확인하세요.'));
+      else alert(d.error || 'Error');
     }});
-  }}
 }}
 function markDirty() {{
   document.getElementById('save-status').style.display = 'none';
@@ -1912,8 +1975,8 @@ function gatherSettings() {{
   }} else {{
     s.token_ttl = ttlSel.value;
   }}
-  s.default_model = document.getElementById('sel-model').value;
-  s.default_sub_model = document.getElementById('sel-sub-model').value;
+  s.default_model = _settings.default_model || 'claude';
+  s.default_sub_model = _settings.default_sub_model || 'sonnet';
   var bls = document.getElementById('sel-bot-lang');
   if (bls) {{ s.bot_lang = bls.value; }}
   var wdi = document.getElementById('workdir-input');
@@ -2129,6 +2192,15 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write(text.encode("utf-8"))
+
+    def _send_json(self, data):
+        import json as _json
+        body = _json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _get_unique_files(self):
         return _aggregate_files(self.modified_entries)
@@ -2505,6 +2577,26 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 log.error("Settings save error: %s", e)
                 self._send_text(500, str(e))
+            return
+
+        if action == "settings-connect":
+            import urllib.parse as _up
+            qs = _up.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            provider = qs.get("provider", [None])[0]
+            import json as _json
+            if not provider or provider not in AI_MODELS:
+                self._send_json({"ok": False, "error": "Unknown provider"})
+                return
+            from telegram import send_html, CHAT_ID, tg_api as _tga
+            import i18n as _i18n
+            prov_label = AI_MODELS[provider].get("label", provider.title())
+            send_html(f"🔌 <b>{prov_label}</b> 연결을 시작합니다.\n잠시 후 안내 메시지가 전송됩니다.")
+            import threading as _thr
+            def _run_connect():
+                from ai.connect import run_connect_flow
+                run_connect_flow(provider)
+            _thr.Thread(target=_run_connect, daemon=True).start()
+            self._send_json({"ok": True})
             return
 
         if action == "clear":
