@@ -174,11 +174,13 @@ def _run_message(text):
                      provider_label,
                      len(output) if output else 0, new_sid, bool(questions))
 
-            if new_sid and new_sid != state.session_id:
+            if new_sid and not sid:
+                # Brand new session (no previous session_id)
                 state.session_id = new_sid
                 state._provider_sessions[state.provider] = new_sid
                 _save_session_id(new_sid)
-                log.info("Session updated: %s (%s)", new_sid, state.provider)
+                config.update_config("provider_sessions", dict(state._provider_sessions))
+                log.info("Session created: %s (%s)", new_sid, state.provider)
 
             active_sid = state.session_id or new_sid or sid
             footer = token_footer()
@@ -604,7 +606,9 @@ def poll_loop():
 
     if killed > 0:
         send_html(f"<b>{i18n.t('bot_duplicate', count=killed)}</b>")
-    send_html(f"<b>{i18n.t('bot_started')}</b>")
+    _prov = config.AI_MODELS.get(state.provider, {}).get("label", state.provider.title())
+    _mdl = state.model or "default"
+    send_html(f"<b>{i18n.t('bot_started', provider=_prov, model=_mdl)}</b>")
 
     while True:
         try:
@@ -699,21 +703,35 @@ def _apply_default_model():
         return  # session already has a model set
     from state import switch_provider
     sub = config.settings.get("default_sub_model")
-    ai = config.settings.get("default_model", "claude")
+    # Use last used provider (persisted), or settings default
+    ai = config._config.get("provider") or config.settings.get("default_model", "claude")
+    # Assign startup session_id to its actual provider (not blindly to claude)
+    if state.session_id:
+        from sessions import get_session_provider
+        actual_prov = get_session_provider(state.session_id)
+        if actual_prov:
+            state._provider_sessions[actual_prov] = state.session_id
+        if actual_prov != state.provider:
+            state.session_id = None
     switch_provider(ai)
-    ai_info = config.AI_MODELS.get(ai)
-    if ai_info:
-        # User-configured sub_model takes priority, then provider default
-        resolved = None
-        if sub:
-            resolved = ai_info["sub_models"].get(sub)
-        if not resolved:
-            default_sub = ai_info.get("default")
-            if default_sub:
-                resolved = ai_info["sub_models"].get(default_sub)
-        if resolved:
-            state.model = resolved
-            config.log.info("Default model applied: %s (%s)", resolved, ai)
+    # Restore persisted model, or apply default from settings
+    saved_model = config._config.get("model")
+    if saved_model:
+        state.model = saved_model
+        config.log.info("Restored model: %s (%s)", saved_model, ai)
+    else:
+        ai_info = config.AI_MODELS.get(ai)
+        if ai_info:
+            resolved = None
+            if sub:
+                resolved = ai_info["sub_models"].get(sub)
+            if not resolved:
+                default_sub = ai_info.get("default")
+                if default_sub:
+                    resolved = ai_info["sub_models"].get(default_sub)
+            if resolved:
+                state.model = resolved
+                config.log.info("Default model applied: %s (%s)", resolved, ai)
 
 
 def main():

@@ -5,7 +5,7 @@ import sys
 
 from commands import command
 from i18n import t
-from config import IS_WINDOWS, AI_MODELS, MODEL_ALIASES, resolve_model, settings, log
+from config import IS_WINDOWS, AI_MODELS, MODEL_ALIASES, resolve_model, settings, log, update_config
 from state import state, switch_provider
 from telegram import escape_html, send_html, CHAT_ID
 from tokens import get_global_usage
@@ -98,6 +98,7 @@ def handle_model(text):
         prov_info = AI_MODELS["claude"]
         default_sub = prov_info.get("default", "sonnet")
         state.model = prov_info["sub_models"].get(default_sub)
+        update_config("model", state.model)
         send_html(f"<b>{t('model.reset_done')}:</b> Claude - <code>{escape_html(state.model)}</code>"); return
     # Two-part command: /model [provider] [model]
     if name in AI_MODELS and len(args) >= 2:
@@ -114,15 +115,18 @@ def handle_model(text):
             state.model = model_arg
             resolved = model_arg
         label = prov_info.get("label", name.title())
+        update_config("model", state.model)
         send_html(f"<b>{t('model.changed')}:</b> {label} - <code>{escape_html(resolved)}</code>"); return
     # Provider-level switch: /model codex, /model gemini, /model claude
     if name in AI_MODELS:
         switch_provider(name)
         prov_info = AI_MODELS[name]
-        default_sub = prov_info.get("default")
-        state.model = prov_info["sub_models"].get(default_sub) if default_sub else None
+        if not state.model:
+            default_sub = prov_info.get("default")
+            state.model = prov_info["sub_models"].get(default_sub) if default_sub else None
         label = prov_info.get("label", name.title())
         model_display = escape_html(state.model) if state.model else t('model.cli_default')
+        update_config("model", state.model)
         send_html(f"<b>{t('model.changed')}:</b> {label} - <code>{model_display}</code>"); return
     # Resolve across all providers
     resolved, provider = resolve_model(name)
@@ -143,22 +147,27 @@ def handle_model(text):
             send_html(t("error.unknown_model", name=f"<code>{escape_html(name)}</code>", aliases=escape_html(aliases))); return
     state.model = resolved
     switch_provider(provider)
+    update_config("model", state.model)
     provider_label = AI_MODELS.get(provider, {}).get("label", provider)
     send_html(f"<b>{t('model.changed')}:</b> {provider_label} - <code>{escape_html(resolved)}</code>")
 
 
 @command("/cancel")
 def handle_cancel(text):
-    with state.lock: proc = state.ai_proc; was_busy = state.busy
+    with state.lock:
+        proc = state.ai_proc
+        was_busy = state.busy
     if proc and proc.poll() is None:
         if IS_WINDOWS:
             proc.terminate()
         else:
             proc.kill()
-        with state.lock: state.ai_proc = None; state.busy = False
+        # Don't touch busy/queue — let _run's finally block handle naturally
         send_html(f"<b>{t('cancel.done')}</b> {t('cancel.killed')}")
     elif was_busy:
-        with state.lock: state.busy = False
+        # No proc but busy — safety reset (thread may have crashed)
+        with state.lock:
+            state.busy = False
         send_html(f"<b>{t('cancel.reset')}</b> {t('cancel.cleared')}")
     else:
         send_html(t("cancel.nothing"))

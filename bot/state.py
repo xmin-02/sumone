@@ -169,7 +169,9 @@ class State:
     pending_question = None
     ai_proc = None
     provider = "claude"
-    _provider_sessions = {}   # {provider: session_id} — per-provider session tracking
+    _provider_sessions = _config.get("provider_sessions", {})   # {provider: session_id}
+    _provider_models = _config.get("provider_models", {})     # {provider: model}
+    _run_gen = 0              # generation counter — bumped by /cancel to detect stale runs
     provider_stats = {
         "claude": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
         "codex": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
@@ -194,15 +196,21 @@ state = State()
 
 
 def switch_provider(new_provider):
-    """Save current provider's session and switch to new_provider, restoring its session."""
+    """Save current provider's session/model and switch to new_provider, restoring its state."""
     if state.provider == new_provider:
         return
-    # Save current provider's session
-    if state.session_id:
-        state._provider_sessions[state.provider] = state.session_id
-    # Switch provider
-    state.provider = new_provider
-    # Restore target provider's session (or None for fresh start)
-    state.session_id = state._provider_sessions.get(new_provider)
+    with state.lock:
+        # Save current provider's session and model
+        if state.session_id:
+            state._provider_sessions[state.provider] = state.session_id
+        if state.model:
+            state._provider_models[state.provider] = state.model
+        # Switch provider and restore target's state
+        state.provider = new_provider
+        state.session_id = state._provider_sessions.get(new_provider)
+        state.model = state._provider_models.get(new_provider)
     from config import update_config
     update_config("session_id", state.session_id)
+    update_config("provider", new_provider)
+    update_config("provider_sessions", dict(state._provider_sessions))
+    update_config("provider_models", dict(state._provider_models))

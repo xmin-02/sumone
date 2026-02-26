@@ -91,7 +91,7 @@
   "busy": "Claude is processing. Use /cancel to stop.",
   "queued": "Message queued (#{pos}). Will be processed automatically after current task.",
   "bot_duplicate": "Duplicate detected: terminated {count} existing bot process(es) and restarting.",
-  "bot_started": "Claude Code Bot started\nSend /help to see available commands.",
+  "bot_started": "{provider} Bot started ({model})\nSend /help to see available commands.",
   "restart": {
     "shutting_down": "Restarting bot..."
   },

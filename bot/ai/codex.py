@@ -12,7 +12,7 @@ class CodexRunner(BaseRunner):
     """Codex CLI runner."""
 
     PROVIDER = "codex"
-    RESUME_MODE = "last_only"
+    RESUME_MODE = "none"
 
     def _build_cmd(self, message, session_id):
         cmd_name = self._find_cli_cmd(["codex", "codex.cmd"])

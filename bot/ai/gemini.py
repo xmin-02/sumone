@@ -12,7 +12,7 @@ class GeminiRunner(BaseRunner):
     """Gemini CLI runner."""
 
     PROVIDER = "gemini"
-    RESUME_MODE = "last_only"
+    RESUME_MODE = "none"
 
     def _build_cmd(self, message, session_id):
         cmd_name = self._find_cli_cmd(["gemini", "gemini.cmd"])

@@ -124,5 +124,5 @@ def update_config(key, value):
         cfg[key] = value
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=4, ensure_ascii=False)
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("Failed to update config key=%s: %s", key, e)

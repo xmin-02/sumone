@@ -189,7 +189,8 @@ class BaseRunner:
                 stderr_out = ""
 
             with state.lock:
-                state.ai_proc = None
+                if state.ai_proc is proc:
+                    state.ai_proc = None
                 self._proc = None
 
             # File viewer link
@@ -201,10 +202,11 @@ class BaseRunner:
             output = "\n\n".join(unsent).strip()
 
             # Save session summary + token log
-            sid_for_save = self._captured_session_id or session_id
+            # Prefer original session_id (context-injected resume) over CLI's new one
+            sid_for_save = session_id or self._captured_session_id
             self._save_session_summary(sid_for_save, message, output)
             if self._result_event:
-                self._append_token_log(self._result_event)
+                self._append_token_log(self._result_event, sid_for_save)
 
             if self._pending_questions:
                 return (output or "", self._captured_session_id,
@@ -225,13 +227,15 @@ class BaseRunner:
             with state.lock:
                 if self._proc:
                     self._proc.kill()
-                state.ai_proc = None
+                if state.ai_proc is self._proc:
+                    state.ai_proc = None
                 self._proc = None
             return i18n.t("error.timeout"), None, None
 
         except Exception as e:
             with state.lock:
-                state.ai_proc = None
+                if state.ai_proc is self._proc:
+                    state.ai_proc = None
                 self._proc = None
             return i18n.t("error.generic", msg=str(e)), None, None
 
@@ -432,6 +436,10 @@ class BaseRunner:
 
         modified = ([e["path"] for e in state.modified_files[-10:]]
                     if state.modified_files else [])
+        # Strip context injection prefix if present
+        _CTX_MARKER = "[Current request]\n"
+        if _CTX_MARKER in user_message:
+            user_message = user_message.split(_CTX_MARKER, 1)[1]
         data["exchanges"].append({
             "user": user_message[:1000],
             "output": (output or "")[:2000],
@@ -448,7 +456,7 @@ class BaseRunner:
 
     # --- Token log ---
 
-    def _append_token_log(self, parsed):
+    def _append_token_log(self, parsed, session_id=None):
         """Append token usage to ~/.sumone/token_log.jsonl with file locking."""
         if not parsed or parsed.kind != "result":
             return
@@ -464,7 +472,7 @@ class BaseRunner:
             "out": parsed.tokens_out,
             "cached": parsed.tokens_cached,
             "cost": parsed.cost_usd if parsed.cost_usd else None,
-            "session": self._captured_session_id or "",
+            "session": session_id or self._captured_session_id or "",
         }
         line = json.dumps(entry, ensure_ascii=False) + "\n"
         try:

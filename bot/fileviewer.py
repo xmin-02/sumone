@@ -1888,7 +1888,8 @@ function updateSubModels() {{
   var info = _aiModels[model];
   if (info && info.sub_models) {{
     Object.keys(info.sub_models).forEach(function(k) {{
-      smSel.innerHTML += '<option value="'+k+'">'+k+'</option>';
+      var mid = info.sub_models[k];
+      smSel.innerHTML += '<option value="'+k+'">'+mid+'</option>';
     }});
   }}
 }}
