@@ -44,6 +44,8 @@ AI_MODELS = {
     "claude": {
         "label": "Claude",
         "cli_cmd": "claude",
+        "install_cmd": ["npm", "install", "-g", "@anthropic-ai/claude-code"],
+        "auth_cmd": ["claude"],
         "default": "sonnet",
         "sub_models": {
             "haiku": "claude-haiku-4-5-20251001",
@@ -54,6 +56,8 @@ AI_MODELS = {
     "codex": {
         "label": "Codex",
         "cli_cmd": "codex",
+        "install_cmd": ["brew", "install", "codex"],
+        "auth_cmd": ["codex", "login", "--device-auth"],
         "default": "codex",
         "sub_models": {
             "codex": "gpt-5.3-codex",
@@ -64,6 +68,8 @@ AI_MODELS = {
     "gemini": {
         "label": "Gemini",
         "cli_cmd": "gemini",
+        "install_cmd": ["brew", "install", "gemini-cli"],
+        "auth_cmd": ["gemini", "-p", "hello"],
         "default": "flash",
         "sub_models": {
             "flash": "gemini-2.5-flash",

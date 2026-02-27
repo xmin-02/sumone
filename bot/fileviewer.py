@@ -11,6 +11,7 @@ from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
+from state import state
 from config import SCRIPT_DIR, log
 
 _SNAPSHOTS_DIR = os.path.join(SCRIPT_DIR, ".snapshots")
@@ -289,6 +290,7 @@ _VIEWER_I18N = {
         "s_workdir": "작업 디렉토리", "s_workdir_d": "파일 탐색 루트 경로",
         "s_stimeout": "설정 페이지 타임아웃", "s_stimeout_d": "비활성 후 자동 만료 시간 (분)",
         "s_save": "저장", "s_saving": "저장 중...", "s_saved": "✔ 저장됨", "s_restarting": "♻ 재시작 중...", "s_expired": "세션이 만료되었습니다. 창을 닫습니다.",
+        "s_ai": "AI 모델", "s_ai_set": "설정하기", "s_ai_active": "설정됨", "s_ai_connect": "연결하기", "s_ai_connect_started": "연결을 시작합니다. 텔레그램을 확인하세요.",
     },
     "en": {
         "title": "Modified Files", "read_only": "Read-only view",
@@ -337,6 +339,7 @@ _VIEWER_I18N = {
         "s_workdir": "Work Directory", "s_workdir_d": "Root directory for file browsing",
         "s_stimeout": "Settings Page Timeout", "s_stimeout_d": "Auto-expire after N minutes of inactivity",
         "s_save": "Save", "s_saving": "Saving...", "s_saved": "\u2714 Saved", "s_restarting": "\u267b Restarting...", "s_expired": "Session expired. Closing window.",
+        "s_ai": "AI Model", "s_ai_set": "Set", "s_ai_active": "Active", "s_ai_connect": "Connect", "s_ai_connect_started": "Connection started. Check Telegram.",
     },
 }
 
@@ -774,6 +777,8 @@ function applyI18n(){
   // lang selector sync
   var ls=document.getElementById('lang-sel');
   if(ls)ls.value=_lang;
+  // rebuild AI providers with updated lang
+  if (typeof _buildAiProviders === 'function' && document.getElementById('ai-providers')) _buildAiProviders();
 }
 function switchLang(lang){
   _lang=lang;localStorage.setItem('fv_lang',lang);applyI18n();
@@ -1911,7 +1916,7 @@ function _buildAiProviders() {{
       hdr.innerHTML = dot + name + arrow;
       hdr.onclick = function() {{ _toggleProvider(div); }};
     }} else {{
-      var connectBtn = '<button class="ai-connect-btn" onclick="event.stopPropagation();_connectProvider(\''+provKey+'\')" data-i18n="s_ai_connect">연결하기</button>';
+      var connectBtn = '<button class="ai-connect-btn" onclick="event.stopPropagation();_connectProvider(\\\''+provKey+'\\\')" data-i18n="s_ai_connect">연결하기</button>';
       hdr.innerHTML = dot + name + connectBtn;
     }}
     div.appendChild(hdr);
@@ -1929,7 +1934,7 @@ function _buildAiProviders() {{
         var btnLabel = isActive ? T('s_ai_active') || '설정됨' : T('s_ai_set') || '설정하기';
         var btnClass = 'ai-model-btn' + (isActive ? ' active' : '');
         row.innerHTML = '<span class="ai-model-name">'+modelId+'</span>'
-          + '<button class="'+btnClass+'" '+(isActive?'disabled':'')+' onclick="_setModel(\''+provKey+'\',\''+subKey+'\')">'+btnLabel+'</button>';
+          + '<button class="'+btnClass+'" '+(isActive?'disabled':'')+' onclick="_setModel(\\\''+provKey+'\\\',\\\''+subKey+'\\\')">'+btnLabel+'</button>';
         panel.appendChild(row);
       }});
       div.appendChild(panel);
@@ -2581,6 +2586,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
 
         if action == "settings-connect":
             import urllib.parse as _up
+            from config import AI_MODELS
             qs = _up.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
             provider = qs.get("provider", [None])[0]
             import json as _json

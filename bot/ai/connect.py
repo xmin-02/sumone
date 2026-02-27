@@ -6,10 +6,12 @@ Handles interactive CLI auth (claude/codex/gemini) by:
 - Sending prompts to Telegram as inline keyboard or text request
 - Forwarding user responses back to the PTY stdin
 """
+import json
 import os
 import re
 import pty
 import select
+import termios
 import threading
 import time
 
@@ -82,14 +84,23 @@ def _send_prompt_to_telegram(provider, prompt_type, data, raw_text):
 
     if prompt_type == "url":
         url = data[0]
+        # Extract device code if present (e.g. "3XQR-0J450")
+        code_match = re.search(r'\b([A-Z0-9]{4}-[A-Z0-9]{4,6})\b', clean)
+        code_line = f"\n\n🔑 인증 코드: <code>{code_match.group(1)}</code>" if code_match else ""
+        # Check if auth code input is needed (Gemini)
+        needs_code = "authorization code" in clean.lower()
+        if needs_code:
+            footer = "\n\n로그인 후 표시되는 인증 코드를 여기에 입력해주세요."
+        else:
+            footer = "\n\n인증 완료 후 자동으로 연결됩니다."
         buttons = [[{"text": "🔗 인증하기", "url": url}]]
         result = tg_api("sendMessage", {
             "chat_id": CHAT_ID,
-            "text": f"🔌 <b>{prov_label}</b> 인증 링크:\n브라우저에서 인증 후 자동으로 완료됩니다.",
+            "text": f"🔌 <b>{prov_label}</b> 인증\n\n아래 버튼을 눌러 브라우저에서 로그인하세요.{code_line}{footer}",
             "parse_mode": "HTML",
-            "reply_markup": {"inline_keyboard": buttons},
+            "reply_markup": json.dumps({"inline_keyboard": buttons}),
         })
-        return result.get("result", {}).get("message_id")
+        return (result or {}).get("result", {}).get("message_id")
 
     elif prompt_type == "yn":
         buttons = [[
@@ -100,9 +111,9 @@ def _send_prompt_to_telegram(provider, prompt_type, data, raw_text):
             "chat_id": CHAT_ID,
             "text": f"🔌 <b>{prov_label}</b>\n<code>{clean[-200:]}</code>",
             "parse_mode": "HTML",
-            "reply_markup": {"inline_keyboard": buttons},
+            "reply_markup": json.dumps({"inline_keyboard": buttons}),
         })
-        return result.get("result", {}).get("message_id")
+        return (result or {}).get("result", {}).get("message_id")
 
     elif prompt_type == "menu":
         items = data
@@ -112,11 +123,11 @@ def _send_prompt_to_telegram(provider, prompt_type, data, raw_text):
             "chat_id": CHAT_ID,
             "text": f"🔌 <b>{prov_label}</b> 선택해주세요:\n<code>{clean[-300:]}</code>",
             "parse_mode": "HTML",
-            "reply_markup": {"inline_keyboard": buttons},
+            "reply_markup": json.dumps({"inline_keyboard": buttons}),
         })
         with _connect_lock:
             _connect_state["menu_items"] = items
-        return result.get("result", {}).get("message_id")
+        return (result or {}).get("result", {}).get("message_id")
 
     elif prompt_type == "text":
         result = tg_api("sendMessage", {
@@ -124,13 +135,86 @@ def _send_prompt_to_telegram(provider, prompt_type, data, raw_text):
             "text": f"🔌 <b>{prov_label}</b>\n<code>{clean[-300:]}</code>\n\n입력 후 전송해주세요.",
             "parse_mode": "HTML",
         })
-        return result.get("result", {}).get("message_id")
+        return (result or {}).get("result", {}).get("message_id")
 
     return None
 
 
+def _check_auth(provider, cli_cmd):
+    """Check if a provider is authenticated."""
+    import subprocess, shutil
+    resolved = shutil.which(cli_cmd)
+    if not resolved:
+        return False
+    if provider == "codex":
+        try:
+            r = subprocess.run([resolved, "login", "status"], capture_output=True, timeout=5)
+            return r.returncode == 0
+        except Exception:
+            return False
+    elif provider == "gemini":
+        return os.path.isfile(os.path.expanduser("~/.gemini/oauth_creds.json"))
+    else:  # claude
+        return True
+
+
+def _is_cli_installed(cli_cmd):
+    """Check if a CLI command is available."""
+    import shutil
+    return shutil.which(cli_cmd) is not None
+
+
+def _install_cli(provider, info):
+    """Install CLI for the given provider. Returns True on success."""
+    import subprocess
+    prov_label = info.get("label", provider.title())
+    install_cmd = info.get("install_cmd")
+    if not install_cmd:
+        send_html(f"❌ {prov_label}의 설치 명령어가 설정되지 않았습니다.")
+        return False
+
+    send_html(f"📦 <b>{prov_label}</b> CLI 설치 중...\n<code>{' '.join(install_cmd)}</code>")
+    log.info("Installing %s CLI: %s", provider, install_cmd)
+
+    try:
+        result = subprocess.run(
+            install_cmd, capture_output=True, text=True, timeout=300,
+            env={**os.environ}
+        )
+        if result.returncode == 0:
+            log.info("%s CLI installed successfully", provider)
+            # macOS: remove quarantine attribute to avoid Gatekeeper popup
+            import shutil, platform
+            if platform.system() == "Darwin":
+                cli_path = shutil.which(info.get("cli_cmd", provider))
+                if cli_path:
+                    try:
+                        # Resolve symlink to actual binary
+                        real_path = os.path.realpath(cli_path)
+                        subprocess.run(["xattr", "-d", "com.apple.quarantine", real_path],
+                                       capture_output=True, timeout=10)
+                        subprocess.run(["xattr", "-d", "com.apple.quarantine", cli_path],
+                                       capture_output=True, timeout=10)
+                        log.info("Removed quarantine from %s", real_path)
+                    except Exception:
+                        pass
+            send_html(f"✅ <b>{prov_label}</b> CLI 설치 완료!")
+            return True
+        else:
+            err_msg = (result.stderr or result.stdout or "unknown error")[-500:]
+            log.error("%s CLI install failed: %s", provider, err_msg)
+            send_html(f"❌ <b>{prov_label}</b> CLI 설치 실패:\n<code>{err_msg}</code>")
+            return False
+    except subprocess.TimeoutExpired:
+        send_html(f"❌ <b>{prov_label}</b> CLI 설치 시간 초과 (5분)")
+        return False
+    except Exception as e:
+        send_html(f"❌ <b>{prov_label}</b> CLI 설치 오류: {e}")
+        return False
+
+
 def run_connect_flow(provider):
-    """Run CLI auth flow for the given provider in a PTY."""
+    """Run CLI install (if needed) + auth flow for the given provider."""
     global _connect_state
 
     info = AI_MODELS.get(provider)
@@ -139,14 +223,36 @@ def run_connect_flow(provider):
         return
 
     cli_cmd = info.get("cli_cmd", provider)
-    auth_args = [cli_cmd, "auth", "login"]
     prov_label = info.get("label", provider.title())
-
-    log.info("Starting connect flow for %s: %s", provider, auth_args)
 
     if IS_WINDOWS:
         send_html(f"❌ Windows에서는 PTY 연결이 지원되지 않습니다.")
         return
+
+    # Step 1: Install if not available
+    if not _is_cli_installed(cli_cmd):
+        if not _install_cli(provider, info):
+            return
+        # Re-check after install
+        if not _is_cli_installed(cli_cmd):
+            send_html(f"❌ 설치 후에도 <b>{cli_cmd}</b> 명령어를 찾을 수 없습니다.")
+            return
+
+    # Step 2: Clear existing auth for re-authentication
+    if provider == "gemini":
+        for f in ["oauth_creds.json", "google_accounts.json"]:
+            p = os.path.expanduser(f"~/.gemini/{f}")
+            if os.path.isfile(p):
+                os.remove(p)
+                log.info("Removed %s for re-auth", p)
+
+    # Step 3: Auth flow
+    auth_args = info.get("auth_cmd", [cli_cmd, "auth", "login"])
+    log.info("Starting connect flow for %s: %s", provider, auth_args)
+
+    import shutil
+    resolved_cmd = shutil.which(auth_args[0]) or auth_args[0]
+    resolved_args = [resolved_cmd] + auth_args[1:]
 
     try:
         pid, fd = pty.fork()
@@ -155,13 +261,24 @@ def run_connect_flow(provider):
         return
 
     if pid == 0:
-        # Child process
+        # Child process — prevent CLI from auto-opening browser
+        os.environ["BROWSER"] = "echo"
+        os.environ["DISPLAY"] = ""
+        if provider == "gemini":
+            os.environ["NO_BROWSER"] = "true"
         try:
-            os.execvp(cli_cmd, auth_args)
+            os.execvp(resolved_cmd, resolved_args)
         except Exception:
             os._exit(1)
 
-    # Parent process
+    # Parent process — disable PTY echo to prevent input being echoed back
+    try:
+        attrs = termios.tcgetattr(fd)
+        attrs[3] &= ~termios.ECHO
+        termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    except Exception:
+        pass
+
     with _connect_lock:
         _connect_state.update({
             "active": True,
@@ -198,19 +315,28 @@ def run_connect_flow(provider):
                 if buf and (time.time() - last_output_time) >= IDLE_TIMEOUT:
                     prompt_type, prompt_data = _detect_prompt(buf)
                     if prompt_type:
+                        # Gemini requires auth code input after URL
+                        needs_input = (prompt_type == "url" and "authorization code" in _strip_ansi(buf).lower())
                         with _connect_lock:
-                            _connect_state["waiting"] = prompt_type if prompt_type != "url" else None
+                            if prompt_type == "url" and not needs_input:
+                                _connect_state["waiting"] = None
+                            else:
+                                _connect_state["waiting"] = "text" if needs_input else prompt_type
                         msg_id = _send_prompt_to_telegram(provider, prompt_type, prompt_data, buf)
                         with _connect_lock:
                             _connect_state["msg_id"] = msg_id
                         buf = ""
-                        if prompt_type == "url":
-                            # Wait for process to complete after URL auth
+                        if prompt_type == "url" and not needs_input:
+                            # Wait for process to complete after URL auth (e.g. Codex)
                             _wait_for_completion(pid, fd, provider, prov_label)
                             return
                         # Wait for user response (handled by handle_connect_response)
                         _wait_for_user_input(fd, provider)
                         buf = ""
+                        if needs_input:
+                            # Auth code entered, now wait for process to finish
+                            _wait_for_completion(pid, fd, provider, prov_label)
+                            return
                     else:
                         # Non-prompt output — show progress
                         clean = _strip_ansi(buf).strip()
@@ -243,16 +369,12 @@ def run_connect_flow(provider):
     if clean_buf:
         send_html(f"<code>{clean_buf[-300:]}</code>")
 
-    # Re-detect CLI status
+    # Re-detect CLI + auth status
     from state import state as _st
-    try:
-        import subprocess
-        r = subprocess.run([cli_cmd, "--version"], capture_output=True, timeout=5)
-        _st.cli_status[provider] = (r.returncode == 0)
-    except Exception:
-        pass
+    authenticated = _check_auth(provider, cli_cmd)
+    _st.cli_status[provider] = authenticated
 
-    if _st.cli_status.get(provider):
+    if authenticated:
         send_html(f"✅ <b>{prov_label}</b> 연결 완료!")
     else:
         send_html(f"❌ <b>{prov_label}</b> 연결 실패. 다시 시도해주세요.")
@@ -283,14 +405,10 @@ def _wait_for_completion(pid, fd, provider, prov_label):
 
     from state import state as _st
     cli_cmd = AI_MODELS.get(provider, {}).get("cli_cmd", provider)
-    try:
-        import subprocess
-        r = subprocess.run([cli_cmd, "--version"], capture_output=True, timeout=5)
-        _st.cli_status[provider] = (r.returncode == 0)
-    except Exception:
-        pass
+    authenticated = _check_auth(provider, cli_cmd)
+    _st.cli_status[provider] = authenticated
 
-    if _st.cli_status.get(provider):
+    if authenticated:
         send_html(f"✅ <b>{prov_label}</b> 연결 완료!")
     else:
         send_html(f"⏳ 인증을 완료했다면 <b>/restart_bot</b> 으로 재시작해주세요.")

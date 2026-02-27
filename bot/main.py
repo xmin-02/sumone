@@ -715,11 +715,38 @@ def _bootstrap_files():
 def _detect_cli_status():
     """Detect which AI CLIs are installed. Runs at startup and caches in state.cli_status."""
     import subprocess as _sp
+    import shutil as _sh
+    # Ensure common CLI paths are in PATH (exec may strip them)
+    _extra = [os.path.expanduser("~/.local/bin"), "/opt/homebrew/bin", "/opt/homebrew/sbin",
+              "/usr/local/bin"]
+    _cur_path = os.environ.get("PATH", "")
+    _missing = [p for p in _extra if p not in _cur_path]
+    if _missing:
+        os.environ["PATH"] = ":".join(_missing) + ":" + _cur_path
+    # Auth check commands per provider (exit code 0 = authenticated)
+    _auth_checks = {
+        "codex": lambda res: _sp.run([res, "login", "status"], capture_output=True, timeout=5).returncode == 0,
+        "gemini": lambda res: os.path.isfile(os.path.expanduser("~/.gemini/oauth_creds.json")),
+        "claude": lambda res: True,  # claude auth is checked at runtime
+    }
     for provider, info in config.AI_MODELS.items():
         cmd = info.get("cli_cmd", provider)
+        resolved = _sh.which(cmd)
+        if not resolved:
+            state.cli_status[provider] = False
+            continue
         try:
-            r = _sp.run([cmd, "--version"], capture_output=True, timeout=5)
-            state.cli_status[provider] = (r.returncode == 0)
+            r = _sp.run([resolved, "--version"], capture_output=True, timeout=5)
+            if r.returncode != 0:
+                state.cli_status[provider] = False
+                continue
+        except Exception:
+            state.cli_status[provider] = False
+            continue
+        # Check auth status
+        try:
+            checker = _auth_checks.get(provider)
+            state.cli_status[provider] = checker(resolved) if checker else True
         except Exception:
             state.cli_status[provider] = False
     log.info("CLI status: %s", state.cli_status)
