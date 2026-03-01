@@ -428,7 +428,8 @@ def _ensure_path():
         if os.path.isdir(npm_dir):
             extra.append(npm_dir)
     else:
-        for d in [os.path.expanduser("~/.local/bin"),
+        for d in [os.path.expanduser("~/.npm-global/bin"),
+                  os.path.expanduser("~/.local/bin"),
                   "/opt/homebrew/bin", "/usr/local/bin"]:
             if os.path.isdir(d):
                 extra.append(d)

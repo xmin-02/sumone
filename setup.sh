@@ -47,16 +47,67 @@ detect_os() {
 }
 
 # ── Prerequisites ───────────────────────────────────────────────────────────
-check_python() {
+check_deps() {
     print_banner
     echo -e "  ${BOLD}[1/4] System Check${NC}\n"
+
+    # --- Python ---
     if command -v python3 &>/dev/null; then PYTHON="python3"
     elif command -v python &>/dev/null && python --version 2>&1 | grep -q "Python 3"; then PYTHON="python"
     else
-        err "Python 3 not found. Install from https://python.org"
-        exit 1
+        info "Python 3 not found. Installing..."
+        case "$OS" in
+            macos)  brew install python3 2>/dev/null || { err "Install Python 3: https://python.org"; exit 1; } ;;
+            linux)  sudo apt-get update -qq && sudo apt-get install -y -qq python3 2>/dev/null \
+                    || sudo dnf install -y python3 2>/dev/null \
+                    || sudo pacman -S --noconfirm python 2>/dev/null \
+                    || { err "Install Python 3: https://python.org"; exit 1; } ;;
+            wsl)    sudo apt-get update -qq && sudo apt-get install -y -qq python3 2>/dev/null \
+                    || { err "Install Python 3: https://python.org"; exit 1; } ;;
+        esac
+        PYTHON="python3"
     fi
     ok "Python: $($PYTHON --version)"
+
+    # --- Node.js / npm (required for AI CLI installs) ---
+    if command -v node &>/dev/null && command -v npm &>/dev/null; then
+        ok "Node.js: $(node --version)"
+    else
+        info "Node.js not found. Installing..."
+        case "$OS" in
+            macos)  brew install node 2>/dev/null || true ;;
+            linux)  # Try NodeSource LTS, fall back to distro package
+                    if command -v curl &>/dev/null; then
+                        curl -fsSL https://deb.nodesource.com/setup_lts.x 2>/dev/null | sudo -E bash - 2>/dev/null \
+                        && sudo apt-get install -y -qq nodejs 2>/dev/null
+                    fi
+                    if ! command -v node &>/dev/null; then
+                        sudo apt-get install -y -qq nodejs npm 2>/dev/null \
+                        || sudo dnf install -y nodejs npm 2>/dev/null \
+                        || sudo pacman -S --noconfirm nodejs npm 2>/dev/null \
+                        || true
+                    fi ;;
+            wsl)    sudo apt-get update -qq && sudo apt-get install -y -qq nodejs npm 2>/dev/null || true ;;
+        esac
+        if command -v node &>/dev/null; then
+            ok "Node.js: $(node --version)"
+        else
+            warn "Node.js not installed — AI CLI installs may fail"
+        fi
+    fi
+
+    # --- npm user prefix (avoids EACCES on global installs) ---
+    if command -v npm &>/dev/null; then
+        local npm_prefix
+        npm_prefix="$(npm config get prefix 2>/dev/null)"
+        if [[ "$npm_prefix" == "/usr" || "$npm_prefix" == "/usr/local" ]]; then
+            local user_prefix="$HOME/.npm-global"
+            mkdir -p "$user_prefix"
+            npm config set prefix "$user_prefix" 2>/dev/null
+            export PATH="$user_prefix/bin:$PATH"
+            ok "npm prefix: $user_prefix (no sudo needed)"
+        fi
+    fi
 }
 
 # ── Download ─────────────────────────────────────────────────────────────────
@@ -305,7 +356,7 @@ main() {
     OS=$(detect_os)
     [[ "$OS" == "unknown" ]] && { err "Unsupported OS. Use WSL on Windows."; exit 1; }
 
-    check_python         # [1/4]
+    check_deps           # [1/4]
     download_bot         # [2/4]
     install_cloudflared
 
