@@ -186,7 +186,7 @@ download_bot() {
         local src="${entry%%:*}" dest="${entry##*:}"
         _dl "${GITHUB_RAW}/${src}" "$INSTALL_DIR/${dest}"
         (( ++i ))
-        printf "\r  ${CYAN}[%d/%d]${NC} %s" "$i" "$total" "${dest}"
+        printf "\r\033[K  ${CYAN}[%d/%d]${NC} %s" "$i" "$total" "${dest}"
     done
     echo ""
     ok "Downloaded ${total} files → ${INSTALL_DIR}"
