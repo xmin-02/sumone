@@ -673,8 +673,17 @@ def apply_onboarding(results):
     except (FileNotFoundError, json.JSONDecodeError):
         cfg = {}
 
+    # bot_token and chat_id must be top-level (config.py reads them there)
+    TOP_LEVEL_KEYS = {"bot_token", "chat_id"}
+    settings_data = {}
+    for k, v in results.items():
+        if k in TOP_LEVEL_KEYS:
+            cfg[k] = v
+        else:
+            settings_data[k] = v
+
     settings = cfg.get("settings", {})
-    settings.update(results)
+    settings.update(settings_data)
     cfg["settings"] = settings
 
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
