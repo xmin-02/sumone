@@ -277,7 +277,8 @@
     "invalid_menu_choice": "Please enter a number between 1 and {max}.",
     "enter_number": "Please enter a number.",
     "connect_usage": "Usage: /connect [provider]\ne.g. /connect claude, /connect codex, /connect gemini",
-    "already_active": "A connection is already in progress. Please wait and try again."
+    "already_active": "A connection is already in progress. Please wait and try again.",
+    "already_connected": "✅ <b>{label}</b> is already connected."
   },
   "file_viewer": {
     "link": "View modified files ({count})"

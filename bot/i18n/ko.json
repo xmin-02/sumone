@@ -277,7 +277,8 @@
     "invalid_menu_choice": "1 ~ {max} 사이의 숫자를 입력해주세요.",
     "enter_number": "숫자를 입력해주세요.",
     "connect_usage": "사용법: /connect [provider]\n예: /connect claude, /connect codex, /connect gemini",
-    "already_active": "이미 연결 진행 중입니다. 완료 후 다시 시도해주세요."
+    "already_active": "이미 연결 진행 중입니다. 완료 후 다시 시도해주세요.",
+    "already_connected": "✅ <b>{label}</b>은(는) 이미 연결되어 있습니다."
   },
   "file_viewer": {
     "link": "수정된 파일 보기 ({count}개)"
