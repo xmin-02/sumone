@@ -104,17 +104,30 @@ def split_message(text, max_len=MAX_MSG_LEN):
 def tg_api(method, params):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     data = urllib.parse.urlencode(params).encode()
-    try:
-        req = urllib.request.Request(url, data=data)
-        resp = urllib.request.urlopen(req, timeout=max(POLL_TIMEOUT + 10, 60))
-        return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode() if e.fp else ""
-        log.error("TG API %s HTTP %s: %s", method, e.code, body[:200])
-        return None
-    except Exception as e:
-        log.error("TG API %s error: %s", method, e)
-        return None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(url, data=data)
+            resp = urllib.request.urlopen(req, timeout=max(POLL_TIMEOUT + 10, 60))
+            return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            body = e.read().decode() if e.fp else ""
+            if e.code == 429:
+                retry_after = 1
+                try:
+                    retry_after = json.loads(body).get("parameters", {}).get("retry_after", 1)
+                except Exception:
+                    pass
+                log.warning("TG API %s rate limited, retry after %ds (attempt %d)",
+                            method, retry_after, attempt + 1)
+                time.sleep(retry_after)
+                continue
+            log.error("TG API %s HTTP %s: %s", method, e.code, body[:200])
+            return None
+        except Exception as e:
+            log.error("TG API %s error: %s", method, e)
+            return None
+    log.error("TG API %s failed after 3 retries (rate limited)", method)
+    return None
 
 
 def tg_api_raw(token, method, params=None):

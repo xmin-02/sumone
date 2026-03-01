@@ -5,7 +5,7 @@ import subprocess
 import threading
 import time
 
-from config import IS_WINDOWS, log
+from config import IS_WINDOWS, BIN_DIR, log
 
 # cloudflared binary name / path
 _CLOUDFLARED_NAMES = ["cloudflared", "cloudflared.exe"]
@@ -13,8 +13,13 @@ _CLOUDFLARED_NAMES = ["cloudflared", "cloudflared.exe"]
 
 def _find_cloudflared():
     """Return the cloudflared command if available, else None."""
+    # Check bin directory first (DDD layout)
+    for name in _CLOUDFLARED_NAMES:
+        local = os.path.join(BIN_DIR, name)
+        if os.path.isfile(local):
+            return local
+    # Legacy: check bot directory
     bot_dir = os.path.dirname(os.path.abspath(__file__))
-    # Check bot directory first (portable install)
     for name in _CLOUDFLARED_NAMES:
         local = os.path.join(bot_dir, name)
         if os.path.isfile(local):
@@ -41,13 +46,13 @@ def check_cloudflared():
 
 
 def install_cloudflared():
-    """Download cloudflared to the bot directory. Returns True on success."""
+    """Download cloudflared to the bin directory. Returns True on success."""
     import urllib.request
-    bot_dir = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(BIN_DIR, exist_ok=True)
 
     if IS_WINDOWS:
         url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
-        dest = os.path.join(bot_dir, "cloudflared.exe")
+        dest = os.path.join(BIN_DIR, "cloudflared.exe")
     else:
         import platform
         machine = platform.machine().lower()
@@ -56,7 +61,7 @@ def install_cloudflared():
         else:
             arch = "amd64"
         url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}"
-        dest = os.path.join(bot_dir, "cloudflared")
+        dest = os.path.join(BIN_DIR, "cloudflared")
 
     log.info("Downloading cloudflared from %s", url)
     try:

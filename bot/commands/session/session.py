@@ -1,13 +1,13 @@
-"""Session commands: /session, /clear, selection, and question answering."""
+"""Session commands: /session, selection, and question answering."""
 import re
+import os
 
 from commands import command
 from i18n import t
-from config import update_config, log
-from state import state
+from config import update_config, AI_MODELS, log
+from state import state, switch_provider
 from telegram import escape_html, send_html
-from sessions import get_sessions, get_session_model, find_project_dirs
-import os
+from sessions import get_provider_sessions, get_session_model, get_session_provider, find_project_dirs
 
 
 def _save_session_id(sid):
@@ -16,7 +16,7 @@ def _save_session_id(sid):
 
 @command("/session", aliases=["/sessions"])
 def handle_session(text):
-    sessions = get_sessions(10)
+    sessions = get_provider_sessions(state.provider, 10)
     state.session_list = sessions
     state.selecting = True
     if not sessions:
@@ -25,20 +25,13 @@ def handle_session(text):
     for i, (sid, ts, preview) in enumerate(sessions, 1):
         p = preview[:50] + "..." if len(preview) > 50 else preview
         lines.append(f"<b>{i}.</b> <code>{sid[:8]}</code> {escape_html(ts)}\n    {escape_html(p)}")
+    provider_label = AI_MODELS.get(state.provider, {}).get("label", state.provider.title())
     current = ""
     if state.session_id: current = f"\n{t('session.current')}: <code>{state.session_id[:8]}</code>"
-    msg = (f"<b>{t('session.title')}</b>{current}\n{'━'*25}\n"
+    msg = (f"<b>{t('session.title')}</b> ({provider_label}){current}\n{'━'*25}\n"
            + "\n".join(lines)
            + f"\n{'━'*25}\n{t('session.prompt')}")
     send_html(msg)
-
-
-@command("/clear", aliases=["/new"])
-def handle_clear(text):
-    state.session_id = None; state.selecting = False
-    state.answering = False; state.pending_question = None
-    _save_session_id(None)
-    send_html(f"<b>{t('session.cleared')}</b>\n{t('session.cleared_desc')}")
 
 
 def show_questions(questions, sid):
@@ -94,6 +87,19 @@ def handle_answer(text):
     handle_message(text)
 
 
+def _connect_session(sid):
+    """Connect to a session, auto-switching provider if needed."""
+    sess_provider = get_session_provider(sid)
+    if sess_provider and sess_provider != state.provider:
+        switch_provider(sess_provider)
+    state.session_id = sid
+    state._provider_sessions[state.provider] = sid
+    _save_session_id(sid)
+    sess_model = get_session_model(sid)
+    if sess_model:
+        state.model = sess_model
+
+
 def handle_selection(text):
     """Handle session selection. Called from main."""
     text = text.strip()
@@ -101,12 +107,11 @@ def handle_selection(text):
         idx = int(text) - 1
         if 0 <= idx < len(state.session_list):
             sid, ts, preview = state.session_list[idx]
-            state.session_id = sid; state.selecting = False
-            _save_session_id(sid)
-            sess_model = get_session_model(sid)
-            if sess_model: state.model = sess_model
+            state.selecting = False
+            _connect_session(sid)
             p = preview[:60] + "..." if len(preview) > 60 else preview
-            model_line = f"\n{t('status.model_label')}: <code>{escape_html(state.model or 'default')}</code>" if sess_model else ""
+            provider_label = AI_MODELS.get(state.provider, {}).get("label", state.provider.title())
+            model_line = f"\n{t('status.model_label')}: {provider_label} - <code>{escape_html(state.model or 'default')}</code>"
             send_html(
                 f"<b>{t('session.connected')}</b>\nID: <code>{sid[:8]}</code>\n"
                 f"{escape_html(ts)}\n{escape_html(p)}{model_line}\n"
@@ -120,12 +125,15 @@ def handle_selection(text):
         for proj_dir in find_project_dirs():
             if os.path.exists(os.path.join(proj_dir, f"{text}.jsonl")):
                 found = True; break
+        if not found:
+            from sessions import _SUMONE_SESSIONS
+            if os.path.isfile(os.path.join(_SUMONE_SESSIONS, f"{text}.json")):
+                found = True
         if found:
-            state.session_id = text; state.selecting = False
-            _save_session_id(text)
-            sess_model = get_session_model(text)
-            if sess_model: state.model = sess_model
-            model_info = f" | {t('status.model_label')}: {escape_html(sess_model)}" if sess_model else ""
+            state.selecting = False
+            _connect_session(text)
+            provider_label = AI_MODELS.get(state.provider, {}).get("label", state.provider.title())
+            model_info = f" | {provider_label} - {escape_html(state.model)}" if state.model else ""
             send_html(f"<b>{t('session.connected')}</b> <code>{text[:8]}</code>{model_info}")
         else:
             send_html(t("session.not_found"))

@@ -1,21 +1,8 @@
-"""Skills and builtin command listings + dynamic plugin menus."""
+"""Skills command: /skills + dynamic plugin menus."""
 from commands import command, _handlers
 from i18n import t
 from config import log
 from telegram import escape_html, send_html
-
-# ---------------------------------------------------------------------------
-# Static command listings
-# ---------------------------------------------------------------------------
-
-@command("/builtin")
-def handle_builtin(text):
-    msg = (
-        f"<b>{t('builtin.title')}</b>\n" + '━'*25 + "\n"
-        f"<b>{t('builtin.handled')}</b>\n{t('builtin.handled_list')}\n"
-        f"\n<b>{t('builtin.passed')}</b>\n{t('builtin.passed_list')}\n"
-        f"\n<b>{t('builtin.cli_only')}</b>\n{t('builtin.cli_only_list')}\n")
-    send_html(msg)
 
 
 @command("/skills")

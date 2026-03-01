@@ -6,10 +6,10 @@ import os
 import threading
 import time
 from datetime import datetime
-from config import _config, SCRIPT_DIR, log
+from config import _config, DATA_DIR, log
 
-_MODIFIED_FILES_PATH = os.path.join(SCRIPT_DIR, "modified_files.json")
-_SNAPSHOTS_DIR = os.path.join(SCRIPT_DIR, ".snapshots")
+_MODIFIED_FILES_PATH = os.path.join(DATA_DIR, "modified_files.json")
+_SNAPSHOTS_DIR = os.path.join(DATA_DIR, "snapshots")
 
 
 def _load_modified_files():
@@ -47,7 +47,47 @@ def save_modified_files(entries):
         log.warning("Failed to save modified_files: %s", e)
 
 
-_current_run_id = 0  # incremented each run_claude() call
+def _default_provider_stats():
+    return {
+        "claude": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
+        "codex": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
+        "gemini": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
+    }
+
+
+def _load_provider_stats():
+    stats = _default_provider_stats()
+    raw = _config.get("provider_stats")
+    if not isinstance(raw, dict):
+        return stats
+    for provider, default in stats.items():
+        row = raw.get(provider)
+        if not isinstance(row, dict):
+            continue
+        try:
+            default["cost"] = float(row.get("cost", 0.0) or 0.0)
+            default["tokens_in"] = int(row.get("tokens_in", 0) or 0)
+            default["tokens_out"] = int(row.get("tokens_out", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    return stats
+
+
+def _load_float(name, default=0.0):
+    try:
+        return float(_config.get(name, default) or 0.0)
+    except (TypeError, ValueError):
+        return default
+
+
+def _load_int(name, default=0):
+    try:
+        return int(_config.get(name, default) or 0)
+    except (TypeError, ValueError):
+        return default
+
+
+_current_run_id = 0  # incremented each AI run() call
 _current_run_label = ""  # user message for current run
 
 
@@ -66,19 +106,28 @@ def get_current_run_id():
     return _current_run_id
 
 
-_SNAPSHOT_TTL_DAYS = 7
 _last_cleanup_ts = 0.0
 
 
+def _get_snapshot_ttl_days():
+    """Read snapshot TTL from settings, fallback to 7."""
+    from config import settings as _settings
+    try:
+        return int(_settings.get("snapshot_ttl_days", 7))
+    except (ValueError, TypeError):
+        return 7
+
+
 def cleanup_old_snapshots():
-    """Delete snapshot files older than _SNAPSHOT_TTL_DAYS. Keeps history entries but clears snapshot ref."""
+    """Delete snapshot files older than configured TTL. Keeps history entries but clears snapshot ref."""
     global _last_cleanup_ts
     now = time.time()
     # Run at most once per hour
     if now - _last_cleanup_ts < 3600:
         return
     _last_cleanup_ts = now
-    cutoff = datetime.now().timestamp() - _SNAPSHOT_TTL_DAYS * 86400
+    ttl_days = _get_snapshot_ttl_days()
+    cutoff = datetime.now().timestamp() - ttl_days * 86400
     changed = False
     for entry in state.modified_files:
         snap = entry.get("snapshot")
@@ -102,7 +151,7 @@ def cleanup_old_snapshots():
             changed = True
     if changed:
         save_modified_files(state.modified_files)
-        log.info("Snapshot cleanup complete (TTL=%d days)", _SNAPSHOT_TTL_DAYS)
+        log.info("Snapshot cleanup complete (TTL=%d days)", ttl_days)
 
 
 def add_modified_file(path, content=None, op="write"):
@@ -158,12 +207,19 @@ class State:
     answering = False
     session_list = []
     pending_question = None
-    claude_proc = None
+    ai_proc = None
+    provider = "claude"
+    _provider_sessions = _config.get("provider_sessions", {})   # {provider: session_id}
+    _provider_models = _config.get("provider_models", {})     # {provider: model}
+    _provider_auth = _config.get("provider_auth", {})         # {provider: {auth config}}
+    _run_gen = 0              # generation counter — bumped by /cancel to detect stale runs
+    cli_status = {}           # {provider: bool} — True if CLI installed & runnable
+    provider_stats = _load_provider_stats()
     busy = False
     model = None
-    total_cost = 0.0
-    last_cost = 0.0
-    global_tokens = 0
+    total_cost = _load_float("total_cost", 0.0)
+    last_cost = _load_float("last_cost", 0.0)
+    global_tokens = _load_int("monthly_tokens", 0)
     waiting_token_input = False
     message_queue = collections.deque()
     lock = threading.Lock()
@@ -175,3 +231,62 @@ class State:
     _viewer_msg_ids = []         # sent viewer link message IDs (for deletion)
 
 state = State()
+
+
+def switch_provider(new_provider):
+    """Save current provider's session/model and switch to new_provider, restoring its state."""
+    if state.provider == new_provider:
+        return
+    with state.lock:
+        # Save current provider's session and model
+        if state.session_id:
+            state._provider_sessions[state.provider] = state.session_id
+        if state.model:
+            state._provider_models[state.provider] = state.model
+        # Switch provider and restore target's state
+        state.provider = new_provider
+        state.session_id = state._provider_sessions.get(new_provider)
+        state.model = state._provider_models.get(new_provider)
+    from config import update_config
+    update_config("session_id", state.session_id)
+    update_config("provider", new_provider)
+    update_config("provider_sessions", dict(state._provider_sessions))
+    update_config("provider_models", dict(state._provider_models))
+
+
+def get_provider_auth(provider):
+    """Return provider auth config as a dict."""
+    auth = state._provider_auth.get(provider)
+    return auth if isinstance(auth, dict) else {}
+
+
+def set_provider_auth(provider, auth):
+    """Persist auth config for a provider."""
+    if auth:
+        state._provider_auth[provider] = dict(auth)
+    else:
+        state._provider_auth.pop(provider, None)
+    from config import update_config
+    update_config("provider_auth", dict(state._provider_auth))
+
+
+def get_provider_env(provider):
+    """Build environment variables for provider-specific auth."""
+    auth = get_provider_auth(provider)
+    env = {}
+    _ENV_MAP = {
+        "claude": {
+            "oauth_token": "CLAUDE_CODE_OAUTH_TOKEN",
+            "oauth_refresh_token": "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+            "account_uuid": "CLAUDE_CODE_ACCOUNT_UUID",
+            "user_email": "CLAUDE_CODE_USER_EMAIL",
+            "organization_uuid": "CLAUDE_CODE_ORGANIZATION_UUID",
+            "api_key": "ANTHROPIC_API_KEY",
+            "auth_token": "ANTHROPIC_AUTH_TOKEN",
+        },
+    }
+    for auth_key, env_key in _ENV_MAP.get(provider, {}).items():
+        val = auth.get(auth_key)
+        if val:
+            env[env_key] = val
+    return env

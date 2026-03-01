@@ -11,36 +11,110 @@ from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
+from state import state
 from config import SCRIPT_DIR, log
 
 _SNAPSHOTS_DIR = os.path.join(SCRIPT_DIR, ".snapshots")
 
 # ---------------------------------------------------------------------------
-# Token management (session-scoped: valid until cleared)
+# Token management with TTL support
 # ---------------------------------------------------------------------------
-_tokens = {}         # token -> True
+import time as _time
+
+_tokens = {}         # token -> expiry_timestamp (0 = never expires)
 _token_lock = threading.Lock()
+
+# Settings-specific one-time access tokens (separate from file viewer tokens)
+_settings_tokens = {}
+_settings_token_lock = threading.Lock()
+
+
+def _get_token_ttl_seconds():
+    """Read token TTL from settings. Returns seconds or None (no expiry)."""
+    from config import settings as _settings
+    ttl = _settings.get("token_ttl", "session")
+    if ttl == "unlimited":
+        return None  # never expires
+    if ttl == "session":
+        return 0  # special: valid until clear_tokens() is called
+    try:
+        minutes = int(ttl)
+        if 1 <= minutes <= 60:
+            return minutes * 60
+    except (ValueError, TypeError):
+        pass
+    return 0  # fallback to session
 
 
 def generate_token():
-    """Generate a session-scoped access token."""
+    """Generate an access token with TTL from settings."""
     token = secrets.token_urlsafe(32)
+    ttl_sec = _get_token_ttl_seconds()
     with _token_lock:
-        _tokens[token] = True
+        if ttl_sec is None or ttl_sec == 0:
+            _tokens[token] = 0  # 0 = no time expiry (session or unlimited)
+        else:
+            _tokens[token] = _time.time() + ttl_sec
+    return token
+
+
+def get_or_create_fixed_token():
+    """Return a persistent fixed token stored in config.json. Creates one if absent."""
+    import json as _json
+    from config import CONFIG_FILE
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            cfg = _json.load(f)
+    except Exception:
+        cfg = {}
+    token = cfg.get("viewer_fixed_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        cfg["viewer_fixed_token"] = token
+        try:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                _json.dump(cfg, f, indent=4, ensure_ascii=False)
+        except Exception:
+            pass
+    # Ensure token is registered (no expiry)
+    with _token_lock:
+        _tokens[token] = 0
     return token
 
 
 def _validate_token(token):
-    """Validate token. Returns True if valid."""
+    """Validate token. Returns True if valid and not expired."""
     with _token_lock:
-        return token in _tokens
+        expiry = _tokens.get(token)
+        if expiry is None:
+            return False
+        if expiry == 0:
+            return True  # session/unlimited - no time expiry
+        if _time.time() > expiry:
+            del _tokens[token]
+            return False
+        return True
 
 
 def clear_tokens():
-    """Invalidate all access tokens."""
+    """Invalidate all access tokens (called on bot restart)."""
     with _token_lock:
         _tokens.clear()
     _ViewerHandler.session_tokens.clear()
+
+
+def generate_settings_token():
+    """Generate a one-time settings page access token (separate from file viewer)."""
+    token = secrets.token_urlsafe(32)
+    with _settings_token_lock:
+        _settings_tokens[token] = True
+    return token
+
+
+def _validate_settings_token(token):
+    """Validate and consume a settings token (one-time use). Returns True if valid."""
+    with _settings_token_lock:
+        return _settings_tokens.pop(token, None) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +269,28 @@ _VIEWER_I18N = {
         "dt_left": "좌측 (이전)", "dt_right": "우측 (이후)",
         "dt_ordered": "자동 시간순 정렬됨", "dt_no_files": "비교 가능한 파일이 없습니다.",
         "dt_select_both": "양쪽 스냅샷을 선택하세요.",
+        "s_disp": "디스플레이", "s_appear": "화면 설정", "s_storage": "저장소", "s_ai": "AI 모델",
+        "s_cost": "비용 표시", "s_cost_d": "응답 후 API 비용 표시",
+        "s_status": "작업 상태 메시지", "s_status_d": "처리 중 도구 사용 상태 표시",
+        "s_global": "전체 비용 표시", "s_global_d": "/cost 명령어에서 전체 비용 표시",
+        "s_remote": "다른 PC 토큰 합산", "s_remote_d": "footer에 원격 봇 토큰 합산",
+        "s_tperiod": "토큰 표시 범위", "s_tperiod_d": "footer에 표시할 토큰 기간",
+        "s_theme": "테마", "s_theme_d": "파일 뷰어 색상 테마",
+        "s_snap": "스냅샷 보관 기간", "s_snap_d": "파일 스냅샷 보관 일수",
+        "s_tttl": "뷰어 토큰 수명", "s_tttl_d": "파일 뷰어 링크 만료 시간",
+        "s_tmin": "토큰 수명 (분)", "s_tmin_d": "1~60분",
+        "s_aimod": "기본 AI", "s_aimod_d": "새 세션의 AI 제공자",
+        "s_sub": "기본 서브 모델", "s_sub_d": "특정 모델 버전",
+        "s_ttl_sess": "세션 (봇 수명)", "s_ttl_unltd": "무제한", "s_ttl_mins": "분 단위",
+        "s_autolink": "파일 뷰어 링크 자동 전송", "s_autolink_d": "파일 수정 시 뷰어 링크 자동 전송",
+        "s_fixedlink": "링크 고정", "s_fixedlink_d": "매번 같은 URL 사용 (북마크 가능)",
+        "s_typing": "타이핑 인디케이터", "s_typing_d": "응답 중 '···' 메시지 표시",
+        "s_botlang": "봇 언어", "s_botlang_d": "봇 응답 및 메시지 언어 (즉시 적용)",
+        "s_system": "시스템",
+        "s_workdir": "작업 디렉토리", "s_workdir_d": "파일 탐색 루트 경로",
+        "s_stimeout": "설정 페이지 타임아웃", "s_stimeout_d": "비활성 후 자동 만료 시간 (분)",
+        "s_save": "저장", "s_saving": "저장 중...", "s_saved": "✔ 저장됨", "s_restarting": "♻ 재시작 중...", "s_expired": "세션이 만료되었습니다. 창을 닫습니다.",
+        "s_ai": "AI 모델", "s_ai_set": "설정하기", "s_ai_active": "설정됨", "s_ai_connect": "연결하기", "s_ai_connect_started": "연결을 시작합니다. 텔레그램을 확인하세요.",
     },
     "en": {
         "title": "Modified Files", "read_only": "Read-only view",
@@ -222,10 +318,58 @@ _VIEWER_I18N = {
         "dt_left": "Left (older)", "dt_right": "Right (newer)",
         "dt_ordered": "Auto time-ordered", "dt_no_files": "No files for comparison.",
         "dt_select_both": "Select both snapshots to compare.",
+        "s_disp": "Display", "s_appear": "Appearance", "s_storage": "Storage", "s_ai": "AI Model",
+        "s_cost": "Show Cost", "s_cost_d": "Show API cost after each response",
+        "s_status": "Show Status", "s_status_d": "Show tool usage status during processing",
+        "s_global": "Show Global Cost", "s_global_d": "Show total cost in /cost command",
+        "s_remote": "Show Remote Tokens", "s_remote_d": "Include remote bot tokens in footer",
+        "s_tperiod": "Token Display Period", "s_tperiod_d": "Token count period shown in footer",
+        "s_theme": "Theme", "s_theme_d": "File viewer color theme",
+        "s_snap": "Snapshot Retention", "s_snap_d": "Days to keep file snapshots",
+        "s_tttl": "Viewer Token TTL", "s_tttl_d": "File viewer link expiry",
+        "s_tmin": "Token TTL (minutes)", "s_tmin_d": "1-60 minutes",
+        "s_aimod": "Default AI", "s_aimod_d": "AI provider for new sessions",
+        "s_sub": "Default Sub-Model", "s_sub_d": "Specific model variant",
+        "s_ttl_sess": "Session (bot lifetime)", "s_ttl_unltd": "Unlimited", "s_ttl_mins": "Minutes",
+        "s_autolink": "Auto Viewer Link", "s_autolink_d": "Send file viewer link automatically when files change",
+        "s_fixedlink": "Fixed Link", "s_fixedlink_d": "Reuse same URL every time (bookmarkable)",
+        "s_typing": "Typing Indicator", "s_typing_d": "Show '···' message while processing",
+        "s_botlang": "Bot Language", "s_botlang_d": "Bot response and message language (applied immediately)",
+        "s_system": "System",
+        "s_workdir": "Work Directory", "s_workdir_d": "Root directory for file browsing",
+        "s_stimeout": "Settings Page Timeout", "s_stimeout_d": "Auto-expire after N minutes of inactivity",
+        "s_save": "Save", "s_saving": "Saving...", "s_saved": "\u2714 Saved", "s_restarting": "\u267b Restarting...", "s_expired": "Session expired. Closing window.",
+        "s_ai": "AI Model", "s_ai_set": "Set", "s_ai_active": "Active", "s_ai_connect": "Connect", "s_ai_connect_started": "Connection started. Check Telegram.",
     },
 }
 
 _VIEWER_I18N_JSON = json.dumps(_VIEWER_I18N, ensure_ascii=False)
+
+# Human-readable setting names for Telegram change notification
+_SETTING_NAMES = {
+    "ko": {
+        "show_cost": "비용 표시", "show_status": "작업 상태 메시지",
+        "show_global_cost": "전체 비용 표시", "show_remote_tokens": "다른 PC 토큰 합산",
+        "token_display": "토큰 표시 범위", "theme": "테마",
+        "snapshot_ttl_days": "스냅샷 보관 기간", "token_ttl": "뷰어 토큰 수명",
+        "auto_viewer_link": "파일 뷰어 링크 자동 전송", "viewer_link_fixed": "링크 고정",
+        "show_typing": "타이핑 인디케이터",
+        "default_model": "기본 AI", "default_sub_model": "기본 서브 모델",
+        "bot_lang": "봇 언어",
+        "work_dir": "작업 디렉토리", "settings_timeout_minutes": "설정 페이지 타임아웃",
+    },
+    "en": {
+        "show_cost": "Show Cost", "show_status": "Show Status",
+        "show_global_cost": "Show Global Cost", "show_remote_tokens": "Show Remote Tokens",
+        "token_display": "Token Display Period", "theme": "Theme",
+        "snapshot_ttl_days": "Snapshot Retention", "token_ttl": "Viewer Token TTL",
+        "auto_viewer_link": "Auto Viewer Link", "viewer_link_fixed": "Fixed Link",
+        "show_typing": "Typing Indicator",
+        "default_model": "Default AI", "default_sub_model": "Default Sub-Model",
+        "bot_lang": "Bot Language",
+        "work_dir": "Work Directory", "settings_timeout_minutes": "Settings Page Timeout",
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +388,13 @@ _CSS = """
   --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px;
   --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-xl: 10px;
   --code-font-size: 0.83rem; --code-line-height: 1.6;
+}
+[data-theme="light"] {
+  --bg-base: #ffffff; --bg-raised: #f6f8fa; --bg-overlay: #eef1f5;
+  --border-muted: #d0d7de; --border-default: #d0d7de;
+  --text-primary: #1f2328; --text-secondary: #656d76; --text-muted: #8b949e;
+  --accent-blue: #0969da; --accent-blue-hover: #0550ae;
+  --color-add: #1a7f37; --color-del: #cf222e; --color-warn: #9a6700; --color-special: #8250df;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: var(--font-ui);
@@ -303,8 +454,8 @@ details.dir-group > summary:hover { background: var(--bg-raised); }
 .file-row { display: flex; align-items: center; padding: 8px 12px;
             border: 1px solid var(--border-muted); border-radius: var(--radius-md); margin: 3px 0 0 0;
             background: var(--bg-raised); transition: border-color 0.2s, background 0.2s; cursor: pointer; }
-.file-row:hover { border-color: var(--accent-blue); background: #1a2030; }
-@media (hover: none) { .file-row:active { background: #1e2740; transform: scale(0.99); } }
+.file-row:hover { border-color: var(--accent-blue); background: var(--bg-overlay); }
+@media (hover: none) { .file-row:active { background: var(--bg-overlay); transform: scale(0.99); } }
 .file-icon { margin-right: 10px; font-size: 1.1em; flex-shrink: 0; }
 .file-name { flex: 1; color: var(--text-primary); font-weight: 500; }
 .file-ts { color: #7d8590; font-size: var(--text-xs); margin-right: 12px; white-space: nowrap; }
@@ -499,7 +650,7 @@ pre.code { background: var(--bg-raised); border: 1px solid var(--border-muted); 
 .cycle-item { display: flex; align-items: center; padding: 10px 14px; margin: 4px 0;
               border: 1px solid var(--border-muted); border-radius: var(--radius-md); cursor: pointer;
               transition: border-color 0.2s, background 0.2s; }
-.cycle-item:hover { border-color: var(--color-warn); background: #1c1a15; }
+.cycle-item:hover { border-color: var(--color-warn); background: var(--bg-overlay); }
 .cycle-info { flex: 1; }
 .cycle-id { color: var(--color-warn); font-weight: 500; font-size: var(--text-sm); }
 .cycle-label { color: var(--text-primary); font-size: 0.82em; margin-top: 3px;
@@ -572,9 +723,37 @@ details > summary:focus-visible { outline: 2px solid var(--accent-blue); outline
 """
 
 _JS = ("""
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
+<link id="hljs-theme" rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
 <script>
 var VI18N=""" + _VIEWER_I18N_JSON + """;
+
+// --- Theme ---
+var _hljsDark='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css';
+var _hljsLight='https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css';
+function _getSystemTheme(){return window.matchMedia('(prefers-color-scheme:light)').matches?'light':'dark';}
+function _resolveTheme(pref){return pref==='system'?_getSystemTheme():pref;}
+function applyTheme(pref){
+  if(!pref)pref=localStorage.getItem('fv_theme')||'system';
+  localStorage.setItem('fv_theme',pref);
+  var resolved=_resolveTheme(pref);
+  document.documentElement.setAttribute('data-theme',resolved==='light'?'light':'');
+  if(resolved==='light')document.documentElement.removeAttribute('data-theme');
+  if(resolved==='light')document.documentElement.setAttribute('data-theme','light');
+  else document.documentElement.removeAttribute('data-theme');
+  var hljsLink=document.getElementById('hljs-theme');
+  if(hljsLink)hljsLink.href=resolved==='light'?_hljsLight:_hljsDark;
+  var btn=document.getElementById('theme-toggle');
+  if(btn)btn.textContent=resolved==='light'?'\\u2600':'\\u263D';
+}
+function toggleTheme(){
+  var cur=localStorage.getItem('fv_theme')||'system';
+  var resolved=_resolveTheme(cur);
+  var next=resolved==='dark'?'light':'dark';
+  applyTheme(next);
+}
+window.matchMedia('(prefers-color-scheme:light)').addEventListener('change',function(){
+  if((localStorage.getItem('fv_theme')||'system')==='system')applyTheme('system');
+});
 
 var _lang=localStorage.getItem('fv_lang')||'ko';
 function T(k){return (VI18N[_lang]||VI18N.ko)[k]||k;}
@@ -598,6 +777,8 @@ function applyI18n(){
   // lang selector sync
   var ls=document.getElementById('lang-sel');
   if(ls)ls.value=_lang;
+  // rebuild AI providers with updated lang
+  if (typeof _buildAiProviders === 'function' && document.getElementById('ai-providers')) _buildAiProviders();
 }
 function switchLang(lang){
   _lang=lang;localStorage.setItem('fv_lang',lang);applyI18n();
@@ -761,7 +942,7 @@ function dtSnapChange(token){
   });
 }
 document.addEventListener('DOMContentLoaded',function(){
-  initHL();applyI18n();
+  applyTheme();initHL();applyI18n();
 });
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js" async onload="initHL()"></script>
@@ -1000,6 +1181,7 @@ def _page_list(entries, session_token):
   <div><h1>\U0001f4c2 <span data-i18n="title">Modified Files</span> ({total_unique})</h1>
   <p class="subtitle">\U0001f512 <span data-i18n="read_only">Read-only view</span></p></div>
   <div class="header-btns">
+    <button id="theme-toggle" class="outline-btn outline-btn--primary" onclick="toggleTheme()" title="Toggle theme">\u263D</button>
     <select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">
       <option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option>
     </select>
@@ -1066,13 +1248,14 @@ def _page_view(fpath, idx, session_token, title_suffix=""):
         content_html = '<div class="no-preview" data-i18n="no_preview">Preview not available.</div>'
 
     suffix_html = f'<span class="snap-label">{html.escape(title_suffix)}</span>' if title_suffix else ""
+    theme_btn = '<button id="theme-toggle" class="outline-btn outline-btn--primary" onclick="toggleTheme()" title="Toggle theme">\u263D</button>'
     lang_sel = ('<select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">'
                 '<option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option></select>')
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(fname)}</title><style>{_CSS}</style></head>
 <body><div class="container">
-<div class="topbar">{back_link}<span class="fname">{html.escape(fname)}{suffix_html}</span>{lang_sel}{download_link}</div>
+<div class="topbar">{back_link}<span class="fname">{html.escape(fname)}{suffix_html}</span>{theme_btn}{lang_sel}{download_link}</div>
 <hr class="separator">
 {content_html}
 </div>{_JS}</body></html>"""
@@ -1082,20 +1265,21 @@ def _page_deleted(fpath, idx, session_token):
     """Generate a page for deleted files."""
     fname = os.path.basename(fpath)
     back_link = f'<a href="/list/{session_token}">\u2190 List</a>'
+    theme_btn = '<button id="theme-toggle" class="outline-btn outline-btn--primary" onclick="toggleTheme()" title="Toggle theme">\u263D</button>'
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{html.escape(fname)} (deleted)</title><style>{_CSS}</style></head>
 <body><div class="container">
-<div class="topbar">{back_link}<span class="fname" style="color:#f85149;text-decoration:line-through">{html.escape(fname)}</span>
-<span style="color:#f85149;font-size:0.85em">\U0001f5d1 Deleted</span></div>
+<div class="topbar">{back_link}<span class="fname" style="color:var(--color-del);text-decoration:line-through">{html.escape(fname)}</span>
+{theme_btn}<span style="color:var(--color-del);font-size:0.85em">\U0001f5d1 Deleted</span></div>
 <hr class="separator">
-<div class="no-preview" style="border-color:#f8514940">
+<div class="no-preview" style="border-color:rgba(248,81,73,0.25)">
   <p style="font-size:1.2em;margin-bottom:10px">\U0001f5d1</p>
   <p>This file has been deleted.</p>
-  <p style="color:#484f58;font-size:0.85em;margin-top:8px">{html.escape(fpath)}</p>
-  <p style="color:#484f58;font-size:0.85em;margin-top:4px">Check the history dropdown on the file list for previous snapshots.</p>
+  <p style="color:var(--text-muted);font-size:0.85em;margin-top:8px">{html.escape(fpath)}</p>
+  <p style="color:var(--text-muted);font-size:0.85em;margin-top:4px">Check the history dropdown on the file list for previous snapshots.</p>
 </div>
-</div></body></html>"""
+</div>{_JS}</body></html>"""
 
 
 def _word_highlight(old_line, new_line):
@@ -1243,13 +1427,14 @@ def _page_diff(old_name, old_text, new_name, new_text, session_token, real_path=
             f'<col class="ln"><col class="mk"><col></colgroup>'
             f'{"".join(table_rows)}</table></div>')
 
+    theme_btn = '<button id="theme-toggle" class="outline-btn outline-btn--primary" onclick="toggleTheme()" title="Toggle theme">\u263D</button>'
     lang_sel = ('<select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">'
                 '<option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option></select>')
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Diff: {html.escape(display_name)}</title><style>{_CSS}</style></head>
 <body><div class="container diff-page">
-<div class="topbar">{back_link}<span class="fname">{html.escape(display_name)}</span>{lang_sel}</div>
+<div class="topbar">{back_link}<span class="fname">{html.escape(display_name)}</span>{theme_btn}{lang_sel}</div>
 <div class="diff-meta">
   <div style="color:#8b949e;font-size:0.85em">{old_ts} \u2192 {new_ts}</div>
   <div class="diff-stats"><span class="add-count">+{add_count}</span><span class="del-count">\u2212{del_count}</span></div>
@@ -1290,6 +1475,7 @@ def _diff_fragment(old_name, old_text, new_name, new_text):
 def _page_diff_tool(entries, session_token):
     """Generate the interactive diff comparison tool page."""
     back_link = f'<a href="/list/{session_token}" data-i18n="back_list">\u2190 List</a>'
+    theme_btn = '<button id="theme-toggle" class="outline-btn outline-btn--primary" onclick="toggleTheme()" title="Toggle theme">\u263D</button>'
     lang_sel = ('<select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">'
                 '<option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option></select>')
 
@@ -1366,7 +1552,7 @@ def _page_diff_tool(entries, session_token):
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Diff Tool</title><style>{_CSS}</style></head>
 <body><div class="container diff-page">
-<div class="topbar">{back_link}<span class="fname" data-i18n="dt_title">Diff \ube44\uad50 \ub3c4\uad6c</span>{lang_sel}</div>
+<div class="topbar">{back_link}<span class="fname" data-i18n="dt_title">Diff \ube44\uad50 \ub3c4\uad6c</span>{theme_btn}{lang_sel}</div>
 <hr class="separator">
 {body_html}
 </div>
@@ -1414,16 +1600,461 @@ def _page_snapshot(snapshot_name, session_token):
     snap_badge = f'<span class="snap-label">\U0001f4cb <span data-i18n="snapshot">Snapshot</span>: {ts_label}</span>' if ts_label else ""
     rb_btn = (f' <a href="javascript:void(0)" onclick="doRollbackFile(\'/rollback/{session_token}/{snapshot_name}\')"'
               f' style="color:#d29922;font-size:0.85em;margin-left:10px">\u21a9 <span data-i18n="rollback">Rollback</span></a>')
+    theme_btn = '<button id="theme-toggle" class="outline-btn outline-btn--primary" onclick="toggleTheme()" title="Toggle theme">\u263D</button>'
     lang_sel = ('<select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">'
                 '<option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option></select>')
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Snapshot: {html.escape(fname)}</title><style>{_CSS}</style></head>
 <body><div class="container">
-<div class="topbar">{back_link}<span class="fname">{html.escape(fname)}{snap_badge}{rb_btn}</span>{lang_sel}</div>
+<div class="topbar">{back_link}<span class="fname">{html.escape(fname)}{snap_badge}{rb_btn}</span>{theme_btn}{lang_sel}</div>
 <hr class="separator">
 {content_html}
 </div>{_JS}</body></html>"""
+
+
+# ---------------------------------------------------------------------------
+# Settings page
+# ---------------------------------------------------------------------------
+def _page_settings(session_token):
+    """Generate the Settings web page with all configurable options."""
+    from config import settings, DEFAULT_SETTINGS, TOKEN_PERIODS, THEME_OPTIONS, AI_MODELS, LANG, WORK_DIR
+    import json as _json
+
+    theme_btn = '<button id="theme-toggle" class="outline-btn outline-btn--primary" onclick="toggleTheme()" title="Toggle theme">\u263D</button>'
+    lang_sel = ('<select id="lang-sel" class="lang-sel" onchange="switchLang(this.value)">'
+                '<option value="ko">\ud55c\uad6d\uc5b4</option><option value="en">English</option></select>')
+
+    s = dict(settings)
+    s["bot_lang"] = LANG
+    s["work_dir"] = WORK_DIR
+    settings_json = _json.dumps(s)
+    timeout_seconds = int(s.get("settings_timeout_minutes", 15)) * 60
+    enabled = settings.get("enabled_providers", ["claude"])
+    filtered_models = {k: v for k, v in AI_MODELS.items() if k in enabled}
+    ai_models_json = _json.dumps(filtered_models or AI_MODELS)
+    cli_status_json = _json.dumps(state.cli_status)
+    token_periods_json = _json.dumps(TOKEN_PERIODS)
+    theme_options_json = _json.dumps(THEME_OPTIONS)
+
+    return f"""<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sumone Settings</title><style>{_CSS}
+.settings-section {{ margin-bottom: 24px; }}
+.settings-section h2 {{ color: var(--accent-blue); font-size: 1em; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border-muted); }}
+.setting-row {{ display: flex; align-items: center; justify-content: space-between; padding: 12px 16px;
+  background: var(--bg-raised); border: 1px solid var(--border-muted); border-radius: var(--radius-md); margin-bottom: 8px; }}
+.setting-label {{ flex: 1; }}
+.setting-label .name {{ color: var(--text-primary); font-weight: 500; font-size: var(--text-sm); }}
+.setting-label .desc {{ color: var(--text-secondary); font-size: var(--text-xs); margin-top: 2px; }}
+.setting-control {{ flex-shrink: 0; margin-left: 16px; }}
+/* Toggle switch */
+.toggle {{ position: relative; display: inline-block; width: 44px; height: 24px; }}
+.toggle input {{ opacity: 0; width: 0; height: 0; }}
+.toggle .slider {{ position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+  background: #555; border-radius: 24px; transition: 0.2s; }}
+.toggle .slider::before {{ content: ''; position: absolute; height: 18px; width: 18px; top: 3px; left: 3px;
+  background: #fff; border-radius: 50%; transition: 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.4); }}
+.toggle input:checked + .slider {{ background: var(--accent-blue); }}
+.toggle input:checked + .slider::before {{ transform: translateX(20px); }}
+/* Select in settings */
+.setting-select {{ background: var(--bg-base); border: 1px solid var(--border-default); color: var(--text-primary);
+  padding: 6px 10px; border-radius: var(--radius-md); font-size: var(--text-sm); outline: none; cursor: pointer; }}
+.setting-select:focus {{ border-color: var(--accent-blue); }}
+/* Number input */
+.setting-number {{ background: var(--bg-base); border: 1px solid var(--border-default); color: var(--text-primary);
+  padding: 6px 10px; border-radius: var(--radius-md); font-size: var(--text-sm); width: 80px; text-align: center; outline: none; }}
+.setting-number:focus {{ border-color: var(--accent-blue); }}
+/* AI Provider accordion */
+.ai-provider {{ border: 1px solid var(--border-muted); border-radius: var(--radius-md); margin-bottom: 8px; overflow: hidden; }}
+.ai-provider-header {{ display: flex; align-items: center; padding: 12px 16px; background: var(--bg-raised); cursor: pointer; user-select: none; gap: 10px; }}
+.ai-provider-header.disconnected {{ cursor: default; }}
+.ai-status-dot {{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }}
+.ai-status-dot.connected {{ background: #4caf50; }}
+.ai-status-dot.disconnected {{ background: #666; }}
+.ai-provider-name {{ flex: 1; font-weight: 500; font-size: var(--text-sm); color: var(--text-primary); }}
+.ai-provider-arrow {{ font-size: 10px; color: var(--text-secondary); transition: transform 0.2s; }}
+.ai-provider.open .ai-provider-arrow {{ transform: rotate(180deg); }}
+.ai-connect-btn {{ padding: 5px 12px; border-radius: var(--radius-md); border: 1px solid var(--accent-blue); background: transparent;
+  color: var(--accent-blue); font-size: var(--text-xs); cursor: pointer; }}
+.ai-connect-btn:hover {{ background: var(--accent-blue); color: #fff; }}
+.ai-provider-models {{ display: none; border-top: 1px solid var(--border-muted); }}
+.ai-provider.open .ai-provider-models {{ display: block; }}
+.ai-model-row {{ display: flex; align-items: center; padding: 10px 16px; gap: 12px; border-bottom: 1px solid var(--border-muted); }}
+.ai-model-row:last-child {{ border-bottom: none; }}
+.ai-model-name {{ flex: 1; font-size: var(--text-sm); color: var(--text-secondary); font-family: monospace; }}
+.ai-model-row.active .ai-model-name {{ color: var(--text-primary); font-weight: 500; }}
+.ai-model-btn {{ padding: 5px 12px; border-radius: var(--radius-md); font-size: var(--text-xs); cursor: pointer; border: 1px solid var(--border-default); background: transparent; color: var(--text-secondary); white-space: nowrap; }}
+.ai-model-btn:hover {{ border-color: var(--accent-blue); color: var(--accent-blue); }}
+.ai-model-btn.active {{ background: var(--accent-blue); color: #fff; border-color: var(--accent-blue); cursor: default; }}
+.setting-number::-webkit-inner-spin-button,
+.setting-number::-webkit-outer-spin-button {{ opacity: 1; filter: invert(1); }}
+/* Save button */
+.save-bar {{ position: sticky; bottom: 0; background: var(--bg-base); padding: 12px 0; border-top: 1px solid var(--border-muted);
+  display: flex; gap: 8px; justify-content: flex-end; }}
+.save-btn {{ background: var(--accent-blue); color: #fff; border: none; padding: 10px 24px;
+  border-radius: var(--radius-md); cursor: pointer; font-size: var(--text-sm); font-weight: 500; }}
+.save-btn:hover {{ filter: brightness(1.1); }}
+.save-btn:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+.save-status {{ color: var(--color-add); font-size: var(--text-sm); align-self: center; display: none; }}
+/* Text input in settings */
+.setting-text {{ background: var(--bg-base); border: 1px solid var(--border-default); color: var(--text-primary);
+  padding: 6px 10px; border-radius: var(--radius-md); font-size: var(--text-sm); width: 200px; outline: none; font-family: var(--font-mono); }}
+.setting-text:focus {{ border-color: var(--accent-blue); }}
+/* Sticky topbar */
+.topbar {{ position: sticky; top: 0; z-index: 100; background: var(--bg-base); padding-bottom: 8px; }}
+/* Session timer */
+.session-timer {{ font-size: 11px; color: var(--text-secondary); font-family: var(--font-mono);
+  margin-left: 8px; opacity: 0.6; vertical-align: middle; }}
+.session-timer.warn {{ color: var(--color-del); opacity: 1; font-weight: bold; animation: blink 1s step-end infinite; }}
+@keyframes blink {{ 50% {{ opacity: 0.3; }} }}
+</style></head>
+<body><div class="container">
+<div class="topbar"><span class="fname">\u2699 Sumone Settings <span id="session-timer" class="session-timer">--:--</span></span>{theme_btn}{lang_sel}</div>
+<hr class="separator">
+
+<div class="settings-section">
+  <h2>\U0001f4ca <span data-i18n="s_disp">Display</span></h2>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_cost">Show Cost</div><div class="desc" data-i18n="s_cost_d">Show API cost after each response</div></div>
+    <div class="setting-control"><label class="toggle"><input type="checkbox" data-key="show_cost"><span class="slider"></span></label></div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_status">Show Status</div><div class="desc" data-i18n="s_status_d">Show tool usage status during processing</div></div>
+    <div class="setting-control"><label class="toggle"><input type="checkbox" data-key="show_status"><span class="slider"></span></label></div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_global">Show Global Cost</div><div class="desc" data-i18n="s_global_d">Show total cost in /cost command</div></div>
+    <div class="setting-control"><label class="toggle"><input type="checkbox" data-key="show_global_cost"><span class="slider"></span></label></div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_remote">Show Remote Tokens</div><div class="desc" data-i18n="s_remote_d">Include remote bot tokens in footer</div></div>
+    <div class="setting-control"><label class="toggle"><input type="checkbox" data-key="show_remote_tokens"><span class="slider"></span></label></div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_tperiod">Token Display Period</div><div class="desc" data-i18n="s_tperiod_d">Token count period shown in footer</div></div>
+    <div class="setting-control"><select class="setting-select" data-key="token_display" id="sel-token-display"></select></div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_typing">Typing Indicator</div><div class="desc" data-i18n="s_typing_d">Show '···' message while processing</div></div>
+    <div class="setting-control"><label class="toggle"><input type="checkbox" data-key="show_typing"><span class="slider"></span></label></div>
+  </div>
+</div>
+
+<div class="settings-section">
+  <h2>\U0001f3a8 <span data-i18n="s_appear">Appearance</span></h2>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_theme">Theme</div><div class="desc" data-i18n="s_theme_d">File viewer color theme</div></div>
+    <div class="setting-control"><select class="setting-select" data-key="theme" id="sel-theme"></select></div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_botlang">Bot Language</div><div class="desc" data-i18n="s_botlang_d">Bot response and message language (applied immediately)</div></div>
+    <div class="setting-control"><select class="setting-select" id="sel-bot-lang">
+      <option value="ko">한국어</option><option value="en">English</option>
+    </select></div>
+  </div>
+</div>
+
+<div class="settings-section">
+  <h2>\U0001f4be <span data-i18n="s_storage">Storage</span></h2>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_snap">Snapshot Retention</div><div class="desc" data-i18n="s_snap_d">Days to keep file snapshots</div></div>
+    <div class="setting-control"><input type="number" class="setting-number" data-key="snapshot_ttl_days" min="1" max="365"></div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_tttl">Viewer Token TTL</div><div class="desc" data-i18n="s_tttl_d">File viewer link expiry</div></div>
+    <div class="setting-control"><select class="setting-select" data-key="token_ttl" id="sel-token-ttl">
+      <option value="session" data-i18n="s_ttl_sess">Session (bot lifetime)</option>
+      <option value="unlimited" data-i18n="s_ttl_unltd">Unlimited</option>
+    </select></div>
+  </div>
+  <div class="setting-row" id="ttl-minutes-row" style="display:none">
+    <div class="setting-label"><div class="name" data-i18n="s_tmin">Token TTL (minutes)</div><div class="desc" data-i18n="s_tmin_d">1-60 minutes</div></div>
+    <div class="setting-control"><input type="number" class="setting-number" id="ttl-minutes-input" min="1" max="60" value="30"></div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_autolink">Auto Viewer Link</div><div class="desc" data-i18n="s_autolink_d">Send file viewer link automatically when files change</div></div>
+    <div class="setting-control"><label class="toggle"><input type="checkbox" data-key="auto_viewer_link"><span class="slider"></span></label></div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_fixedlink">Fixed Link</div><div class="desc" data-i18n="s_fixedlink_d">Reuse same URL every time (bookmarkable)</div></div>
+    <div class="setting-control"><label class="toggle"><input type="checkbox" data-key="viewer_link_fixed"><span class="slider"></span></label></div>
+  </div>
+</div>
+
+<div class="settings-section">
+  <h2>\U0001f916 <span data-i18n="s_ai">AI Model</span></h2>
+  <div id="ai-providers"></div>
+</div>
+
+<div class="settings-section">
+  <h2>\u2699\ufe0f <span data-i18n="s_system">System</span></h2>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_workdir">Work Directory</div><div class="desc" data-i18n="s_workdir_d">Root directory for file browsing</div></div>
+    <div class="setting-control"><input type="text" id="workdir-input" class="setting-text" placeholder="/home/user"></div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label"><div class="name" data-i18n="s_stimeout">Settings Page Timeout</div><div class="desc" data-i18n="s_stimeout_d">Auto-expire after N minutes of inactivity</div></div>
+    <div class="setting-control"><input type="number" class="setting-number" id="stimeout-input" min="1" max="120"></div>
+  </div>
+</div>
+
+<div class="save-bar">
+  <span class="save-status" id="save-status" data-i18n="s_saved">\u2714 Saved</span>
+  <button class="save-btn" id="save-btn" onclick="saveSettings()" data-i18n="s_save">Save</button>
+</div>
+
+</div>
+<script>
+var _settings = {settings_json};
+var _aiModels = {ai_models_json};
+var _cliStatus = {cli_status_json};
+var _tokenPeriods = {token_periods_json};
+var _themeOptions = {theme_options_json};
+var _sessionToken = '{session_token}';
+var _timeoutSecs = {timeout_seconds};
+var _timerRemaining = _timeoutSecs;
+var _timerInterval = null;
+var _initialSettings = JSON.parse(JSON.stringify(_settings));
+var _modelDirty = false;
+
+function _putIfChanged(out, key, value) {{
+  if (_initialSettings[key] !== value) out[key] = value;
+}}
+
+function _fmtTime(s) {{ var m=Math.floor(s/60),ss=s%60; return m+':'+(ss<10?'0':'')+ss; }}
+function _updateTimerDisplay() {{
+  var el = document.getElementById('session-timer');
+  if (!el) return;
+  el.textContent = _fmtTime(_timerRemaining);
+  if (_timerRemaining <= 120) el.classList.add('warn'); else el.classList.remove('warn');
+}}
+function _resetTimer() {{ _timerRemaining = _timeoutSecs; _updateTimerDisplay(); }}
+function _startTimer() {{
+  _timerRemaining = _timeoutSecs; _updateTimerDisplay();
+  clearInterval(_timerInterval);
+  _timerInterval = setInterval(function() {{
+    _timerRemaining--;
+    _updateTimerDisplay();
+    if (_timerRemaining <= 0) {{
+      clearInterval(_timerInterval);
+      document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:16px;color:#8b949e;font-family:monospace">'
+        + '<div style="font-size:2.5em">\u23f0</div>'
+        + '<div>' + (T('s_expired') || '세션이 만료되었습니다.') + '</div></div>';
+      setTimeout(function() {{ window.close(); }}, 2500);
+    }}
+  }}, 1000);
+}}
+
+function initSettings() {{
+  // Toggles
+  document.querySelectorAll('.toggle input[data-key]').forEach(function(cb) {{
+    cb.checked = !!_settings[cb.dataset.key];
+    cb.addEventListener('change', markDirty);
+  }});
+  // Token display period
+  var tds = document.getElementById('sel-token-display');
+  _tokenPeriods.forEach(function(p) {{ tds.innerHTML += '<option value="'+p+'">'+p+'</option>'; }});
+  tds.value = _settings.token_display || 'month';
+  tds.addEventListener('change', markDirty);
+  // Theme
+  var ts = document.getElementById('sel-theme');
+  _themeOptions.forEach(function(t) {{ ts.innerHTML += '<option value="'+t+'">'+t+'</option>'; }});
+  ts.value = _settings.theme || 'system';
+  ts.addEventListener('change', function() {{ applyTheme(this.value); markDirty(); }});
+  // Bot language
+  var bls = document.getElementById('sel-bot-lang');
+  if (bls) {{ bls.value = _settings.bot_lang || 'ko'; bls.addEventListener('change', markDirty); }}
+  // Snapshot TTL
+  var snap = document.querySelector('input[data-key="snapshot_ttl_days"]');
+  if (snap) {{ snap.value = _settings.snapshot_ttl_days || 7; snap.addEventListener('change', markDirty); }}
+  // Token TTL
+  var ttlSel = document.getElementById('sel-token-ttl');
+  var ttlRow = document.getElementById('ttl-minutes-row');
+  var ttlInput = document.getElementById('ttl-minutes-input');
+  var curTtl = _settings.token_ttl || 'session';
+  if (typeof curTtl === 'number' || (typeof curTtl === 'string' && /^\\d+$/.test(curTtl))) {{
+    ttlSel.value = 'minutes';
+    if (!ttlSel.querySelector('option[value="minutes"]')) {{
+      ttlSel.insertAdjacentHTML('afterbegin', '<option value="minutes">Minutes</option>');
+    }}
+    ttlSel.value = 'minutes';
+    ttlInput.value = parseInt(curTtl);
+    ttlRow.style.display = '';
+  }} else {{
+    ttlSel.value = curTtl;
+  }}
+  // Add minutes option if not present
+  if (!ttlSel.querySelector('option[value="minutes"]')) {{
+    ttlSel.insertAdjacentHTML('afterbegin', '<option value="minutes">Minutes</option>');
+  }}
+  ttlSel.addEventListener('change', function() {{
+    ttlRow.style.display = this.value === 'minutes' ? '' : 'none';
+    markDirty();
+  }});
+  ttlInput.addEventListener('change', markDirty);
+  // AI Provider accordion
+  _buildAiProviders();
+  // Work directory
+  var wdi = document.getElementById('workdir-input');
+  if (wdi) {{ wdi.value = _settings.work_dir || ''; wdi.addEventListener('change', markDirty); }}
+  // Settings timeout
+  var sti = document.getElementById('stimeout-input');
+  if (sti) {{ sti.value = _settings.settings_timeout_minutes || 15; sti.addEventListener('change', markDirty); }}
+}}
+function _buildAiProviders() {{
+  var container = document.getElementById('ai-providers');
+  container.innerHTML = '';
+  var provKeys = Object.keys(_aiModels);
+  var activeModel = _settings.default_model;
+  if (!activeModel || !_aiModels[activeModel]) activeModel = provKeys.length ? provKeys[0] : 'claude';
+  var firstInfo = _aiModels[activeModel] || {{}};
+  var firstSub = firstInfo.default || (firstInfo.sub_models ? Object.keys(firstInfo.sub_models)[0] : '');
+  var activeSub = _settings.default_sub_model || firstSub;
+  Object.keys(_aiModels).forEach(function(provKey) {{
+    var info = _aiModels[provKey];
+    var connected = !!_cliStatus[provKey];
+    var isOpen = (provKey === activeModel);
+    var div = document.createElement('div');
+    div.className = 'ai-provider' + (isOpen && connected ? ' open' : '');
+    div.dataset.provider = provKey;
+    // Header
+    var hdr = document.createElement('div');
+    hdr.className = 'ai-provider-header' + (connected ? '' : ' disconnected');
+    var dot = '<span class="ai-status-dot ' + (connected ? 'connected' : 'disconnected') + '"></span>';
+    var name = '<span class="ai-provider-name">' + info.label + '</span>';
+    if (connected) {{
+      var arrow = '<span class="ai-provider-arrow">▼</span>';
+      hdr.innerHTML = dot + name + arrow;
+      hdr.onclick = function() {{ _toggleProvider(div); }};
+    }} else {{
+      var connectBtn = '<button class="ai-connect-btn" onclick="event.stopPropagation();_connectProvider(\\\''+provKey+'\\\')" data-i18n="s_ai_connect">연결하기</button>';
+      hdr.innerHTML = dot + name + connectBtn;
+    }}
+    div.appendChild(hdr);
+    // Models panel
+    if (connected && info.sub_models) {{
+      var panel = document.createElement('div');
+      panel.className = 'ai-provider-models';
+      Object.keys(info.sub_models).forEach(function(subKey) {{
+        var modelId = info.sub_models[subKey];
+        var isActive = (provKey === activeModel && subKey === activeSub);
+        var row = document.createElement('div');
+        row.className = 'ai-model-row' + (isActive ? ' active' : '');
+        row.dataset.provider = provKey;
+        row.dataset.sub = subKey;
+        var btnLabel = isActive ? T('s_ai_active') || '설정됨' : T('s_ai_set') || '설정하기';
+        var btnClass = 'ai-model-btn' + (isActive ? ' active' : '');
+        row.innerHTML = '<span class="ai-model-name">'+modelId+'</span>'
+          + '<button class="'+btnClass+'" '+(isActive?'disabled':'')+' onclick="_setModel(\\\''+provKey+'\\\',\\\''+subKey+'\\\')">'+btnLabel+'</button>';
+        panel.appendChild(row);
+      }});
+      div.appendChild(panel);
+    }}
+    container.appendChild(div);
+  }});
+}}
+function _toggleProvider(div) {{
+  var wasOpen = div.classList.contains('open');
+  document.querySelectorAll('.ai-provider').forEach(function(d) {{ d.classList.remove('open'); }});
+  if (!wasOpen) div.classList.add('open');
+}}
+function _setModel(provKey, subKey) {{
+  _settings.default_model = provKey;
+  _settings.default_sub_model = subKey;
+  _modelDirty = true;
+  _buildAiProviders();
+  markDirty();
+}}
+function _connectProvider(provKey) {{
+  if (window.__connectPending) return;
+  window.__connectPending = true;
+  fetch('/settings-connect/'+_sessionToken+'?provider='+provKey, {{method:'POST'}})
+    .then(function(r) {{ return r.json(); }})
+    .then(function(d) {{
+      if (d.ok) alert((T('s_ai_connect_started')||'연결을 시작합니다. 텔레그램을 확인하세요.'));
+      else alert(d.error || 'Error');
+    }})
+    .catch(function() {{ alert('Error'); }})
+    .finally(function() {{ window.__connectPending = false; }});
+}}
+function markDirty() {{
+  document.getElementById('save-status').style.display = 'none';
+  _resetTimer();
+}}
+function gatherSettings() {{
+  var s = {{}};
+  document.querySelectorAll('.toggle input[data-key]').forEach(function(cb) {{
+    _putIfChanged(s, cb.dataset.key, cb.checked);
+  }});
+  _putIfChanged(s, 'token_display', document.getElementById('sel-token-display').value);
+  _putIfChanged(s, 'theme', document.getElementById('sel-theme').value);
+  var snap = document.querySelector('input[data-key="snapshot_ttl_days"]');
+  _putIfChanged(s, 'snapshot_ttl_days', parseInt(snap.value) || 7);
+  var ttlSel = document.getElementById('sel-token-ttl');
+  var tokenTtl = ttlSel.value;
+  if (ttlSel.value === 'minutes') {{
+    tokenTtl = parseInt(document.getElementById('ttl-minutes-input').value) || 30;
+  }}
+  _putIfChanged(s, 'token_ttl', tokenTtl);
+  if (_modelDirty) {{
+    var _pk = Object.keys(_aiModels);
+    var _dm = _settings.default_model;
+    if (!_dm || !_aiModels[_dm]) _dm = _pk.length ? _pk[0] : 'claude';
+    var _di = _aiModels[_dm] || {{}};
+    var _ds = _settings.default_sub_model || _di.default || (_di.sub_models ? Object.keys(_di.sub_models)[0] : '');
+    _putIfChanged(s, 'default_model', _dm);
+    _putIfChanged(s, 'default_sub_model', _ds);
+    s._model_dirty = true;
+  }}
+  var bls = document.getElementById('sel-bot-lang');
+  if (bls) {{ _putIfChanged(s, 'bot_lang', bls.value); }}
+  var wdi = document.getElementById('workdir-input');
+  if (wdi) {{ _putIfChanged(s, 'work_dir', wdi.value.trim()); }}
+  var sti = document.getElementById('stimeout-input');
+  if (sti) {{ _putIfChanged(s, 'settings_timeout_minutes', parseInt(sti.value) || 15); }}
+  return s;
+}}
+function saveSettings() {{
+  var btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  btn.textContent = T('s_saving');
+  fetch('/settings-save/' + _sessionToken, {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify(gatherSettings())
+  }}).then(function(r) {{
+    if (r.ok) {{
+      r.text().then(function(txt) {{
+        if (txt === 'RESTART') {{
+          btn.textContent = T('s_restarting') || '재시작 중...';
+          clearInterval(_timerInterval);
+          var timerEl = document.getElementById('session-timer');
+          if (timerEl) timerEl.textContent = '';
+          setTimeout(function() {{ window.close(); }}, 3000);
+        }} else {{
+          document.getElementById('save-status').style.display = '';
+          btn.textContent = T('s_saved') || '✔ 저장됨';
+          btn.disabled = true;
+          _initialSettings = JSON.parse(JSON.stringify(_settings));
+          _modelDirty = false;
+          setTimeout(function() {{ window.close(); }}, 1500);
+        }}
+      }});
+    }} else {{
+      r.text().then(function(t) {{ alert('Save failed: ' + t); btn.textContent = T('s_save'); btn.disabled = false; }});
+    }}
+  }}).catch(function() {{ alert('Save failed'); btn.textContent = T('s_save'); btn.disabled = false; }});
+}}
+document.addEventListener('DOMContentLoaded', function() {{
+  initSettings();
+  _startTimer();
+  document.addEventListener('mousemove', _resetTimer);
+  document.addEventListener('keydown', _resetTimer);
+  document.addEventListener('click', _resetTimer);
+}});
+</script>
+{_JS}</body></html>"""
 
 
 # ---------------------------------------------------------------------------
@@ -1569,8 +2200,10 @@ def _do_rollback_cycle(run_id, entries):
 class _ViewerHandler(BaseHTTPRequestHandler):
     """Read-only file viewer HTTP handler."""
 
-    modified_entries = []     # list of entry dicts
-    session_tokens = {}       # token -> True
+    modified_entries = []          # list of entry dicts
+    session_tokens = {}            # file viewer session tokens
+    settings_session_tokens = {}   # settings page session tokens (separate)
+    settings_msg_id = None         # message ID of the settings link to delete on save
 
     def log_message(self, format, *args):
         log.debug("FileViewer: %s", format % args)
@@ -1592,6 +2225,15 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.end_headers()
         self.wfile.write(text.encode("utf-8"))
+
+    def _send_json(self, data):
+        import json as _json
+        body = _json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _get_unique_files(self):
         return _aggregate_files(self.modified_entries)
@@ -1626,9 +2268,18 @@ class _ViewerHandler(BaseHTTPRequestHandler):
         if len(path_parts) < 2:
             return None
         st = path_parts[1]
-        if st not in _ViewerHandler.session_tokens:
-            return None
-        return st
+        if st in _ViewerHandler.session_tokens:
+            return st
+        if st in _ViewerHandler.settings_session_tokens:
+            from config import settings
+            timeout = settings.get("settings_timeout_minutes", 15) * 60
+            last_activity = _ViewerHandler.settings_session_tokens[st]
+            if _time.time() - last_activity > timeout:
+                _ViewerHandler.settings_session_tokens.pop(st, None)
+                return None
+            _ViewerHandler.settings_session_tokens[st] = _time.time()
+            return st
+        return None
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -1648,9 +2299,29 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             return
 
         action = path_parts[0]
+
+        # Settings entry point: /settings?token=xxx → create settings session → redirect
+        if action == "settings" and len(path_parts) == 1:
+            params = parse_qs(parsed.query)
+            token_list = params.get("token", [])
+            if not token_list or not _validate_settings_token(token_list[0]):
+                self._send_error(403, "Invalid or expired settings token")
+                return
+            session_token = secrets.token_urlsafe(16)
+            _ViewerHandler.settings_session_tokens[session_token] = _time.time()
+            self.send_response(302)
+            self.send_header("Location", f"/settings/{session_token}")
+            self.end_headers()
+            return
+
         session_token = self._check_session(path_parts)
         if not session_token:
             self._send_error(403, "Session expired")
+            return
+
+        if action == "settings":
+            body = _page_settings(session_token)
+            self._send_html(200, body)
             return
 
         if action == "list":
@@ -1819,6 +2490,161 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             return
 
         action = path_parts[0]
+
+        if action == "settings-save":
+            try:
+                content_len = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_len).decode("utf-8")
+                import json as _json
+                new_settings = _json.loads(body)
+                from config import settings, update_config, AI_MODELS, LANG
+                # Snapshot old values for change summary
+                old_settings = dict(settings)
+                old_lang = LANG
+                from config import WORK_DIR as _OLD_WORK_DIR
+                old_work_dir = _OLD_WORK_DIR
+                # Handle bot_lang separately (top-level config key, not in settings dict)
+                new_lang = old_lang
+                if "bot_lang" in new_settings:
+                    new_lang = new_settings.pop("bot_lang")
+                    update_config("lang", new_lang)
+                    import config as _cfg; _cfg.LANG = new_lang
+                    import i18n as _i18n; _i18n.load(new_lang)
+                # Handle work_dir separately (top-level config key)
+                new_work_dir = old_work_dir
+                if "work_dir" in new_settings:
+                    new_work_dir = new_settings.pop("work_dir")
+                    if new_work_dir and new_work_dir != old_work_dir:
+                        update_config("work_dir", new_work_dir)
+                        import config as _cfg2; _cfg2.WORK_DIR = new_work_dir
+                        # Clear session so Claude starts fresh in the new work directory
+                        update_config("session_id", None)
+                        from state import state as _st2; _st2.session_id = None
+                # Apply default model only when user explicitly changed model in this page session.
+                model_dirty = bool(new_settings.pop("_model_dirty", False))
+                if not model_dirty:
+                    new_settings.pop("default_model", None)
+                    new_settings.pop("default_sub_model", None)
+                for k, v in new_settings.items():
+                    settings[k] = v
+                update_config("settings", dict(settings))
+                # Apply default_model/sub_model to state
+                sub = new_settings.get("default_sub_model")
+                ai = new_settings.get("default_model")
+                from state import state as _st, switch_provider
+                if ai:
+                    switch_provider(ai)
+                    ai_info = AI_MODELS.get(ai)
+                    if ai_info and sub:
+                        resolved = ai_info.get("sub_models", {}).get(sub)
+                        if resolved:
+                            _st.model = resolved
+                        else:
+                            _st.model = None  # use CLI default
+                    else:
+                        _st.model = None
+                    _st._provider_models[_st.provider] = _st.model
+                    update_config("model", _st.model)
+                    update_config("provider_models", dict(_st._provider_models))
+                # Invalidate session (one-time use)
+                _ViewerHandler.settings_session_tokens.pop(session_token, None)
+                # Build and send change notification to Telegram
+                try:
+                    from telegram import tg_api, escape_html
+                    from config import CHAT_ID, LANG as _LANG
+                    names = _SETTING_NAMES.get(_LANG, _SETTING_NAMES["en"])
+                    def _fmt(v):
+                        if isinstance(v, bool):
+                            return ("ON" if v else "OFF") if _LANG == "en" else ("켜짐" if v else "꺼짐")
+                        return str(v)
+                    changes = []
+                    for k, new_v in new_settings.items():
+                        old_v = old_settings.get(k)
+                        if old_v != new_v:
+                            label = names.get(k, k)
+                            changes.append(f"{label}: {_fmt(old_v)} → {_fmt(new_v)}")
+                    if old_lang != new_lang:
+                        label = names.get("bot_lang", "Bot Language")
+                        changes.append(f"{label}: {old_lang} → {new_lang}")
+                    if old_work_dir != new_work_dir:
+                        label = names.get("work_dir", "Work Directory")
+                        changes.append(f"{label}: {old_work_dir} → {new_work_dir}")
+                    if changes:
+                        heading = "설정이 변경되었습니다." if _LANG == "ko" else "Settings updated."
+                        lines = "\n".join(f"{i+1}. {c}" for i, c in enumerate(changes))
+                        msg = f"<b>{heading}</b>\n{lines}"
+                        # Delete old settings link message
+                        if _ViewerHandler.settings_msg_id:
+                            tg_api("deleteMessage", {"chat_id": CHAT_ID, "message_id": _ViewerHandler.settings_msg_id})
+                            _ViewerHandler.settings_msg_id = None
+                        tg_api("sendMessage", {"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
+                except Exception as ne:
+                    log.warning("Settings notification error: %s", ne)
+                log.info("Settings saved via web UI: %s", new_settings)
+                # Schedule restart if work_dir changed
+                _needs_restart = (old_work_dir != new_work_dir)
+                self._send_text(200, "RESTART" if _needs_restart else "OK")
+                if _needs_restart:
+                    import threading as _thr, sys as _sys
+                    def _do_restart():
+                        _time.sleep(1.5)
+                        try:
+                            from telegram import tg_api as _tga
+                            from config import CHAT_ID as _CID, LANG as _RL
+                            _rmsg = ("작업 디렉토리 변경으로 봇을 재시작합니다." if _RL == "ko"
+                                     else "Restarting bot due to work directory change.")
+                            _tga("sendMessage", {"chat_id": _CID, "text": _rmsg})
+                        except Exception:
+                            pass
+                        # Flush pending Telegram updates before restart
+                        try:
+                            from telegram import tg_api as _tga2
+                            _upd = _tga2("getUpdates", {"timeout": 0})
+                            if _upd and _upd.get("ok"):
+                                _ulist = _upd.get("result", [])
+                                if _ulist:
+                                    _mid = max(u["update_id"] for u in _ulist)
+                                    _tga2("getUpdates", {"offset": _mid + 1, "timeout": 0})
+                        except Exception:
+                            pass
+                        try:
+                            from main import _stop_file_viewer
+                            _stop_file_viewer()
+                        except Exception:
+                            pass
+                        _main_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "main.py"))
+                        _sys.stdout.flush()
+                        os.execv(_sys.executable, [_sys.executable, _main_py])
+                    _thr.Thread(target=_do_restart, daemon=True).start()
+            except Exception as e:
+                log.error("Settings save error: %s", e)
+                self._send_text(500, str(e))
+            return
+
+        if action == "settings-connect":
+            import urllib.parse as _up
+            from config import AI_MODELS
+            qs = _up.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            provider = qs.get("provider", [None])[0]
+            import json as _json
+            if not provider or provider not in AI_MODELS:
+                self._send_json({"ok": False, "error": "Unknown provider"})
+                return
+            from ai.connect import is_connect_active
+            if is_connect_active():
+                self._send_json({"ok": False, "error": "Another connection is already in progress."})
+                return
+            from telegram import send_html, CHAT_ID, tg_api as _tga
+            import i18n as _i18n
+            prov_label = AI_MODELS[provider].get("label", provider.title())
+            send_html(f"🔌 <b>{prov_label}</b> — {_i18n.t('ai_connect.started')}")
+            import threading as _thr
+            def _run_connect():
+                from ai.connect import run_connect_flow
+                run_connect_flow(provider)
+            _thr.Thread(target=_run_connect, daemon=True).start()
+            self._send_json({"ok": True})
+            return
 
         if action == "clear":
             from state import clear_modified_files

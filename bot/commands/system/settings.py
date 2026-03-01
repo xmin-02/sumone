@@ -56,6 +56,27 @@ def _settings_text():
 
 @command("/settings")
 def handle_settings(text):
+    from state import state
+    # Web Settings UI (via Cloudflare Tunnel) - preferred
+    if state.file_viewer_url:
+        try:
+            from fileviewer import generate_settings_token, _ViewerHandler
+            token = generate_settings_token()
+            url = f"{state.file_viewer_url}/settings?token={token}"
+            result = tg_api("sendMessage", {
+                "chat_id": CHAT_ID,
+                "text": f'<b>\u2699 Settings</b>\n<a href="{url}">{escape_html(t("settings.open_web"))}</a>',
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            })
+            try:
+                _ViewerHandler.settings_msg_id = result["result"]["message_id"]
+            except Exception:
+                pass
+            return
+        except Exception as e:
+            log.warning("Web settings failed, falling back to inline keyboard: %s", e)
+    # Fallback: inline keyboard
     tg_api("sendMessage", {
         "chat_id": CHAT_ID,
         "text": _settings_text(),

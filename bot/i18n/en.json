@@ -21,7 +21,9 @@
     "invalid_token_verify": "Invalid token. Please check.",
     "self_token": "Cannot connect the current bot's own token.",
     "already_connected": "Already connected: @{name}",
-    "unknown_model": "Unknown model: {name}\nAvailable: {aliases}"
+    "unknown_model": "Unknown model: {name}\nAvailable: {aliases}",
+    "provider_disabled": "{name} is not enabled.\nChange AI providers in /settings.",
+    "empty_response": "AI returned an empty response. Please try again."
   },
   "session": {
     "none": "No sessions found.",
@@ -36,7 +38,7 @@
     "continue_hint": "Send a message to continue this session."
   },
   "question": {
-    "title": "Claude — Selection Required",
+    "title": "AI — Selection Required",
     "prompt": "Enter a number to select.",
     "selected": "\"{label}\" selected."
   },
@@ -47,9 +49,10 @@
     "examples": "Examples",
     "restore_default": "default — restore default",
     "reset_done": "Model reset",
-    "reset_to": "default (sonnet)",
+    "reset_to": "default",
     "changed": "Model changed",
-    "default_name": "default (sonnet)",
+    "default_name": "default",
+    "cli_default": "CLI default",
     "reset_keywords": ["default", "reset"]
   },
   "status": {
@@ -72,7 +75,8 @@
     "input_tokens": "Input tokens",
     "output_tokens": "Output tokens",
     "total_tokens": "Total tokens",
-    "line": "💰 ${cost} | ⏱ {duration} | 🔄 {turns} turns | 📊 {in_tok}+{out_tok} tokens"
+    "line": "💰 ${cost} | ⏱ {duration} | 🔄 {turns} turns | 📊 {in_tok}+{out_tok} tokens",
+    "provider_title": "Usage by Provider (current session)"
   },
   "cancel": {
     "done": "Cancelled.",
@@ -86,10 +90,13 @@
     "label": "Typing",
     "cancel_hint": "/cancel to stop"
   },
-  "busy": "Claude is processing. Use /cancel to stop.",
+  "busy": "AI is processing. Use /cancel to stop.",
   "queued": "Message queued (#{pos}). Will be processed automatically after current task.",
   "bot_duplicate": "Duplicate detected: terminated {count} existing bot process(es) and restarting.",
-  "bot_started": "Claude Code Bot started\nSend /help to see available commands.",
+  "bot_started": "sumone Bot started — {provider} ({model})\nSend /help to see available commands.",
+  "cli_watcher": {
+    "header": "CLI Direct Response"
+  },
   "restart": {
     "shutting_down": "Restarting bot..."
   },
@@ -165,16 +172,17 @@
     "tap_toggle": "Tap to toggle",
     "token_range": "Token display range",
     "close": "Close",
-    "token_prefix": "Tokens"
+    "token_prefix": "Tokens",
+    "open_web": "Open Settings Page"
   },
   "help": {
-    "title": "Claude Code Telegram Bot",
+    "title": "sumone — Omni AI Orchestration",
     "usage_title": "Usage",
-    "usage_body": "Send text to chat with Claude.\nAttach a photo or file to have it analyzed automatically.\nSend a skill command (e.g. /autopilot) to have Claude run that skill.",
+    "usage_body": "Send text to chat with AI. (Claude / Codex / Gemini)\nAttach a photo or file to have it analyzed automatically.\nSend a skill command (e.g. /autopilot) to have AI run that skill.\nUse /connect to link an AI provider.",
     "session_title": "Sessions",
     "session_body": "The bot maintains conversation context per session.\nA session is created automatically on your first message,\nand subsequent messages continue in the same session.\nUse /session to reconnect to a previous session, or\n/clear to start a new session.",
     "model_title": "Model",
-    "model_body": "/model opus, /model sonnet, /model haiku\n/model default to restore the default",
+    "model_body": "/model [name] to change model\n/model default to restore the default\ne.g. /model opus, /model flash, /model codex",
     "commands_title": "Command Reference",
     "commands_body": "/builtin — List CLI built-in commands\n/skills — List OMC skills\n/update_bot — Auto-update bot",
     "examples_title": "Examples",
@@ -184,7 +192,7 @@
     "title": "Built-in Commands (CLI)",
     "handled": "Handled by bot",
     "handled_list": "  /clear — Clear session\n  /cost — Show cost\n  /model — Change/show model\n  /session — Select session\n  /status — Show status\n  /cancel — Cancel task\n  /pwd — Current working directory\n  /cd — Change directory\n  /ls — List files\n  /settings — Bot settings (cost display, status messages, etc.)\n  /update_bot — Auto-update bot (download latest code from GitHub)",
-    "passed": "Passed to Claude",
+    "passed": "Passed to AI",
     "passed_list": "  /compact — Compress context\n  /context — Context usage\n  /init — Initialize project\n  /review — Code review\n  /security-review — Security review\n  /pr-comments — PR comments\n  /release-notes — Release notes\n  /insights — Insights\n  /extra-usage — Extra usage",
     "cli_only": "CLI only (not supported in bot)",
     "cli_only_list": "  /config — Change settings\n  /permissions — Permission settings\n  /doctor — Diagnostics\n  /login, /logout — Authentication\n  /add-dir — Add directory\n  /agents — Agent settings"
@@ -209,7 +217,7 @@
     ["help", "Help"],
     ["session", "Session list & select"],
     ["clear", "New session"],
-    ["model", "Change model (opus/sonnet/haiku)"],
+    ["model", "Change model"],
     ["cost", "Cost info"],
     ["status", "Current status"],
     ["settings", "Bot settings"],
@@ -221,13 +229,59 @@
     ["ls", "List files/folders"],
     ["update_bot", "Update bot"],
     ["total_tokens", "Total PC token usage summary"],
-    ["restart_bot", "Restart bot"]
+    ["restart_bot", "Restart bot"],
+    ["connect", "Connect AI (claude/codex/gemini)"]
   ],
   "todo_count": "({count})",
   "plugin_menu": {
     "title": "{plugin} Skills ({count})",
     "hint": "Tap a command to copy. Add arguments and send.",
     "botfather_desc": "{plugin} plugin skills ({count})"
+  },
+  "ai_connect": {
+    "started": "Starting connection. Check Telegram for instructions.",
+    "busy": "Connection in progress. Only send input when prompted.",
+    "input_masked": "[input hidden]",
+    "invalid_auth_format": "Invalid auth string format.",
+    "state_mismatch": "Auth state value does not match current session.",
+    "token_exchange_http_fail": "Token exchange failed (HTTP {code}): {detail}",
+    "token_exchange_fail": "Token exchange failed: {error}",
+    "token_no_tokens": "Token exchange response missing access_token or refresh_token.",
+    "auth_code": "🔑 Auth code: <code>{code}</code>",
+    "url_footer_claude": "This is the browser login step.\nWhen prompted, paste the full code from the browser into Telegram.",
+    "url_footer_code_needed": "After logging in, enter the authorization code shown here.",
+    "url_footer_no_code": "If no code prompt appears, no additional input is needed in Telegram.",
+    "auth_button": "🔗 Authenticate",
+    "url_message": "🔌 <b>{label}</b> Auth\n\nTap the button below to log in via browser.{code_line}{footer}",
+    "yes": "✅ Yes",
+    "no": "❌ No",
+    "select_prompt": "🔌 <b>{label}</b> Please select:",
+    "text_prompt": "Enter your input and send.",
+    "no_install_cmd": "❌ No install command configured for {label}.",
+    "installing": "📦 Installing <b>{label}</b> CLI...",
+    "install_ok": "✅ <b>{label}</b> CLI installed!",
+    "install_fail": "❌ <b>{label}</b> CLI install failed:",
+    "install_timeout": "❌ <b>{label}</b> CLI install timed out (5 min)",
+    "install_error": "❌ <b>{label}</b> CLI install error: {error}",
+    "unknown_provider": "❌ Unknown provider: {name}",
+    "cli_not_found": "❌ <b>{cmd}</b> command not found even after install.",
+    "setup_fail": "❌ <b>{label}</b> setup failed: <code>{error}</code>",
+    "connecting": "🔌 Connecting <b>{label}</b>...",
+    "pty_not_supported": "❌ PTY connection is not supported on Windows.",
+    "pty_fail": "❌ PTY creation failed: {error}",
+    "auth_timeout": "⏰ <b>{label}</b> auth timed out. Please try again.",
+    "connected": "✅ <b>{label}</b> connected!",
+    "gemini_fail": "❌ <b>Gemini</b> connection failed.\nPlease paste the auth code from the browser into Telegram.\nTap <b>Connect</b> to retry if needed.",
+    "connect_fail": "❌ <b>{label}</b> connection failed. Please try again.",
+    "auth_restart_hint": "⏳ If you completed auth, restart with <b>/restart_bot</b>.",
+    "input_timeout": "⏰ Input timed out. Connection aborted.",
+    "claude_auth_early": "ℹ️ <b>Claude</b> auth URL has not been shown yet.\nPlease send the auth string after the browser login prompt appears.",
+    "claude_token_fail": "❌ <b>Claude</b> token exchange failed.",
+    "invalid_menu_choice": "Please enter a number between 1 and {max}.",
+    "enter_number": "Please enter a number.",
+    "connect_usage": "Usage: /connect [provider]\ne.g. /connect claude, /connect codex, /connect gemini",
+    "already_active": "A connection is already in progress. Please wait and try again.",
+    "already_connected": "✅ <b>{label}</b> is already connected."
   },
   "file_viewer": {
     "link": "View modified files ({count})"

@@ -3,10 +3,10 @@ import os
 import time
 import urllib.request
 
-from config import BOT_TOKEN, log
+from config import BOT_TOKEN, DATA_DIR, log
 from telegram import tg_api
 
-DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "downloads")
+DOWNLOAD_DIR = os.path.join(DATA_DIR, "downloads")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
 TEXT_EXTS = {

@@ -10,15 +10,17 @@ import urllib.request
 
 from commands import command
 from i18n import t
-from config import BOT_TOKEN, GITHUB_REPO, LANG, _config, update_config, log
+from config import BOT_TOKEN, ROOT_DIR, GITHUB_REPO, LANG, _config, update_config, log
 from telegram import escape_html, send_html
+
+# Target bot directory for updates (always ~/.sumone/bot/)
+_TARGET_BOT_DIR = os.path.join(ROOT_DIR, "bot")
 
 
 def _update_profile_photo():
     """Download logo from GitHub and set as bot profile photo if changed."""
-    install_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    cached_logo = os.path.join(install_dir, ".logo_cache.png")
-    tmp_logo = os.path.join(install_dir, ".logo_new.png")
+    cached_logo = os.path.join(ROOT_DIR, ".logo_cache.png")
+    tmp_logo = os.path.join(ROOT_DIR, ".logo_new.png")
     try:
         logo_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/assets/logo.png"
         urllib.request.urlretrieve(logo_url, tmp_logo)
@@ -148,10 +150,10 @@ def _fetch_patch_notes():
 @command("/update_bot", aliases=["/update"])
 def handle_update_bot(text):
     send_html(f"<i>{t('update.checking')}</i>")
-    bot_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    os.makedirs(_TARGET_BOT_DIR, exist_ok=True)
     try:
         photo_updated = _update_profile_photo()
-        updated, added = _update_all_files(bot_dir)
+        updated, added = _update_all_files(_TARGET_BOT_DIR)
         if not updated and not added:
             if photo_updated:
                 send_html(f"<b>{t('update.photo_updated')}</b>")
@@ -165,13 +167,17 @@ def handle_update_bot(text):
         if added:
             summary.append(f"New: {len(added)}")
         update_config("last_update", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        # Migrate github_repo to new repo name on file update
+        _new_repo = "xmin-02/sumone"
+        if GITHUB_REPO != _new_repo:
+            update_config("github_repo", _new_repo)
         send_html(
             f"<b>{t('update.complete')}</b> ({', '.join(summary)} files)\n"
             f"{'━'*25}\n{escape_html(patch_notes)}\n{'━'*25}\n"
             f"<i>{t('update.restarting')}</i>"
         )
         time.sleep(1)
-        main_path = os.path.join(bot_dir, "main.py")
+        main_path = os.path.join(_TARGET_BOT_DIR, "main.py")
         os.execv(sys.executable, [sys.executable, main_path])
     except Exception as e:
         send_html(f"<b>{t('update.failed')}:</b> {escape_html(str(e))}")
