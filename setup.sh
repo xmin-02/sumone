@@ -210,24 +210,31 @@ setup_autostart() {
         linux)
             local svc="$HOME/.config/systemd/user"
             mkdir -p "$svc"
-            cat > "$svc/claude-telegram.service" << EOF
+            cat > "$svc/sumone-bot.service" << EOF
 [Unit]
 Description=sumone Telegram Bot
 
 [Service]
 ExecStart=$PYTHON $BOT_PATH
-Restart=always
+Restart=on-failure
 RestartSec=5
 Environment=HOME=$HOME
 
 [Install]
 WantedBy=default.target
 EOF
+            # Clean up old service name
+            systemctl --user stop claude-telegram.service 2>/dev/null || true
+            systemctl --user disable claude-telegram.service 2>/dev/null || true
+            rm -f "$svc/claude-telegram.service"
+            # Kill any stale bot process
+            pkill -f "python.*main\.py.*\.sumone" 2>/dev/null || true
+            sleep 1
             systemctl --user daemon-reload
-            systemctl --user enable claude-telegram.service
-            systemctl --user start claude-telegram.service
+            systemctl --user enable sumone-bot.service
+            systemctl --user restart sumone-bot.service
             ok "systemd service registered (auto-start enabled)"
-            echo -e "  ${DIM}Status:  systemctl --user status claude-telegram"
+            echo -e "  ${DIM}Status:  systemctl --user status sumone-bot"
             echo -e "  Logs:    tail -f $INSTALL_DIR/logs/bot.log${NC}"
             ;;
         macos)
@@ -263,7 +270,7 @@ EOF
     echo ""
     echo -e "  ${DIM}Uninstall:"
     case "$OS" in
-        linux) echo "    systemctl --user stop claude-telegram && systemctl --user disable claude-telegram" ;;
+        linux) echo "    systemctl --user stop sumone-bot && systemctl --user disable sumone-bot" ;;
         macos) echo "    launchctl unload ~/Library/LaunchAgents/com.sumone.telegram-bot.plist" ;;
         wsl)   echo "    pkill -f main.py  # remove autostart line from ~/.bashrc" ;;
     esac
