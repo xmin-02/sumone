@@ -61,6 +61,17 @@ _ONBOARD_I18N = {
         "auth_fail": "  ✗ {name} 인증 실패 — 봇에서 재시도 가능",
         "press_enter": "  Enter를 눌러 계속...",
         "min_one": "⚠ 최소 1개를 선택하세요",
+        "bot_token": "Telegram 봇 토큰",
+        "bot_token_desc": "@BotFather에서 받은 토큰을 입력하세요",
+        "bot_token_hint": "예: 123456789:ABCdefGhIjKlMnOpQrStUvWxYz",
+        "bot_token_invalid": "⚠ 유효하지 않은 토큰입니다. 다시 입력하세요.",
+        "bot_token_ok": "✓ 봇 확인됨: {name}",
+        "chat_id": "Chat ID",
+        "chat_id_desc": "봇과 대화할 Telegram Chat ID",
+        "chat_id_auto": "✓ 자동 감지됨: {chat_id}",
+        "chat_id_manual": "자동 감지 실패 — 직접 입력하세요 (봇에게 /start 메시지를 보낸 후 재시도)",
+        "chat_id_hint": "숫자만 입력 (예: 123456789)",
+        "auth_exists": "  ✓ {name} 이미 인증됨 — 건너뜀",
     },
     "en": {
         "welcome": "Sumone Initial Setup",
@@ -95,6 +106,17 @@ _ONBOARD_I18N = {
         "auth_fail": "  ✗ {name} auth failed — can retry from bot",
         "press_enter": "  Press Enter to continue...",
         "min_one": "⚠ Select at least one",
+        "bot_token": "Telegram Bot Token",
+        "bot_token_desc": "Enter the token from @BotFather",
+        "bot_token_hint": "e.g. 123456789:ABCdefGhIjKlMnOpQrStUvWxYz",
+        "bot_token_invalid": "⚠ Invalid token. Please try again.",
+        "bot_token_ok": "✓ Bot verified: {name}",
+        "chat_id": "Chat ID",
+        "chat_id_desc": "Telegram Chat ID for the bot",
+        "chat_id_auto": "✓ Auto-detected: {chat_id}",
+        "chat_id_manual": "Auto-detect failed — enter manually (send /start to the bot first, then retry)",
+        "chat_id_hint": "Numbers only (e.g. 123456789)",
+        "auth_exists": "  ✓ {name} already authenticated — skipping",
     },
 }
 
@@ -245,6 +267,29 @@ def _render_multi_menu(lang, step_num, total_steps, title, desc,
     print(f"  {_t(lang, 'multi_hint')}")
 
 
+def _text_input(lang, step_num, total_steps, title, desc, hint="",
+                validate=None, error_msg=""):
+    """Text input with TUI header. Loops until validate() returns truthy."""
+    while True:
+        _clear_screen()
+        print(_header())
+        print(f"  {_t(lang, 'step')} {step_num}/{total_steps}: {title}")
+        print(f"  {desc}\n")
+        if hint:
+            print(f"  {hint}\n")
+        value = input("  > ").strip()
+        if not value:
+            continue
+        if validate is None:
+            return value
+        result = validate(value)
+        if result:
+            return result if isinstance(result, str) else value
+        if error_msg:
+            print(f"\n  {error_msg}")
+            input(f"\n  {_t(lang, 'press_enter')}")
+
+
 def _select(lang, step_num, total_steps, title, desc, options):
     """Single-select menu. Returns selected index."""
     selected = 0
@@ -287,6 +332,65 @@ def _multi_select(lang, step_num, total_steps, title, desc, options,
 # ---------------------------------------------------------------------------
 # CLI install & auth helpers
 # ---------------------------------------------------------------------------
+def _validate_bot_token(token):
+    """Validate bot token via Telegram getMe API. Returns bot name or None."""
+    import urllib.request
+    try:
+        url = f"https://api.telegram.org/bot{token}/getMe"
+        resp = urllib.request.urlopen(url, timeout=10)
+        data = json.loads(resp.read())
+        if data.get("ok"):
+            bot_info = data.get("result", {})
+            return bot_info.get("first_name") or bot_info.get("username") or "OK"
+    except Exception:
+        pass
+    return None
+
+
+def _detect_chat_id(token):
+    """Try to detect chat ID from recent messages sent to the bot."""
+    import urllib.request
+    try:
+        url = f"https://api.telegram.org/bot{token}/getUpdates?limit=10"
+        resp = urllib.request.urlopen(url, timeout=10)
+        data = json.loads(resp.read())
+        if data.get("ok"):
+            for update in reversed(data.get("result", [])):
+                msg = update.get("message", {})
+                chat = msg.get("chat", {})
+                if chat.get("id"):
+                    return str(chat["id"])
+    except Exception:
+        pass
+    return None
+
+
+def _is_authenticated(provider_key):
+    """Check if a provider CLI is already authenticated."""
+    info = AI_PROVIDERS[provider_key]
+    cli = info["cli_cmd"]
+    if not shutil.which(cli):
+        return False
+    try:
+        if provider_key == "claude":
+            r = subprocess.run(
+                [cli, "auth", "status"],
+                capture_output=True, timeout=5,
+            )
+            return r.returncode == 0
+        elif provider_key == "codex":
+            return bool(os.environ.get("OPENAI_API_KEY"))
+        elif provider_key == "gemini":
+            r = subprocess.run(
+                [cli, "--version"],
+                capture_output=True, timeout=5,
+            )
+            return r.returncode == 0
+    except Exception:
+        pass
+    return False
+
+
 def _ensure_path():
     """Add common CLI install locations to PATH for detection."""
     extra = []
@@ -391,9 +495,12 @@ def _setup_providers(selected_keys, lang):
             print(f"  {_t(lang, 'cli_missing').format(name=name)}")
             installed = _try_install(pkey, lang)
 
-        # 2. Authenticate (only if CLI is available)
+        # 2. Authenticate (only if CLI is available and not already authed)
         if installed:
-            _try_auth(pkey, lang)
+            if _is_authenticated(pkey):
+                print(f"{_t(lang, 'auth_exists').format(name=name)}")
+            else:
+                _try_auth(pkey, lang)
             ready.append(pkey)
 
         print()
@@ -414,35 +521,77 @@ def run_onboarding(lang=None):
     if not lang:
         lang = "ko"
 
-    total = 5  # max steps (adjusts if single provider)
+    total = 7  # max steps (adjusts based on conditions)
     results = {}
+    step = 1
 
-    # --- Step 1: Theme ---
+    # --- Step 1: Bot Token ---
+    def _check_token(token):
+        name = _validate_bot_token(token)
+        if name:
+            print(f"\n  {_t(lang, 'bot_token_ok').format(name=name)}")
+            import time; time.sleep(1)
+            return True
+        return None
+
+    bot_token = _text_input(lang, step, total,
+                            _t(lang, "bot_token"),
+                            _t(lang, "bot_token_desc"),
+                            hint=_t(lang, "bot_token_hint"),
+                            validate=_check_token,
+                            error_msg=_t(lang, "bot_token_invalid"))
+    results["bot_token"] = bot_token
+    step += 1
+
+    # --- Step 2: Chat ID (auto-detect first) ---
+    detected_id = _detect_chat_id(bot_token)
+    if detected_id:
+        _clear_screen()
+        print(_header())
+        print(f"  {_t(lang, 'step')} {step}/{total}: {_t(lang, 'chat_id')}")
+        print(f"  {_t(lang, 'chat_id_desc')}\n")
+        print(f"  {_t(lang, 'chat_id_auto').format(chat_id=detected_id)}")
+        input(f"\n  {_t(lang, 'press_enter')}")
+        results["chat_id"] = detected_id
+    else:
+        chat_id = _text_input(lang, step, total,
+                              _t(lang, "chat_id"),
+                              _t(lang, "chat_id_manual"),
+                              hint=_t(lang, "chat_id_hint"),
+                              validate=lambda v: v if v.lstrip("-").isdigit() else None,
+                              error_msg=_t(lang, "chat_id_hint"))
+        results["chat_id"] = chat_id
+    step += 1
+
+    # --- Step 3: Theme ---
     theme_options = [_t(lang, "system"), _t(lang, "dark"), _t(lang, "light")]
     theme_values = ["system", "dark", "light"]
-    idx = _select(lang, 1, total,
+    idx = _select(lang, step, total,
                   _t(lang, "theme"), _t(lang, "theme_desc"), theme_options)
     results["theme"] = theme_values[idx]
+    step += 1
 
-    # --- Step 2: Snapshot retention ---
+    # --- Step 4: Snapshot retention ---
     days_label = _t(lang, "days")
     snap_options = [f"3 {days_label}", f"7 {days_label}",
                     f"14 {days_label}", f"30 {days_label}"]
     snap_values = [3, 7, 14, 30]
-    idx = _select(lang, 2, total,
+    idx = _select(lang, step, total,
                   _t(lang, "snapshot"), _t(lang, "snapshot_desc"), snap_options)
     results["snapshot_ttl_days"] = snap_values[idx]
+    step += 1
 
-    # --- Step 3: AI Providers (multi-select, min 1) ---
+    # --- Step 5: AI Providers (multi-select, min 1) ---
     provider_keys = list(AI_PROVIDERS.keys())
     provider_labels = [AI_PROVIDERS[k]["label"] for k in provider_keys]
     defaults = [k == "claude" for k in provider_keys]  # Claude pre-checked
-    sel_indices = _multi_select(lang, 3, total,
+    sel_indices = _multi_select(lang, step, total,
                                 _t(lang, "ai_providers"),
                                 _t(lang, "ai_providers_desc"),
                                 provider_labels, defaults=defaults)
     selected = [provider_keys[i] for i in sel_indices]
     results["enabled_providers"] = selected
+    step += 1
 
     # --- CLI install + auth (progress screen, not a numbered step) ---
     ready = _setup_providers(selected, lang)
@@ -450,25 +599,24 @@ def run_onboarding(lang=None):
     # Adjust total if single provider (skip default-provider step)
     multiple = len(ready) > 1
     if not multiple:
-        total = 4
+        total -= 1
 
-    # --- Step 4 (conditional): Default provider ---
+    # --- Step 6 (conditional): Default provider ---
     if multiple:
         ready_labels = [AI_PROVIDERS[k]["label"] for k in ready]
-        idx = _select(lang, 4, total,
+        idx = _select(lang, step, total,
                       _t(lang, "default_provider"),
                       _t(lang, "default_provider_desc"),
                       ready_labels)
         default_prov = ready[idx]
-        sub_step = 5
+        step += 1
     else:
         default_prov = ready[0]
-        sub_step = 4
     results["default_model"] = default_prov
 
-    # --- Step 5 (or 4): Sub-model ---
+    # --- Step 7 (or 6): Sub-model ---
     sub_models = AI_PROVIDERS[default_prov]["sub_models"]
-    idx = _select(lang, sub_step, total,
+    idx = _select(lang, step, total,
                   _t(lang, "sub_model"), _t(lang, "sub_model_desc"),
                   sub_models)
     results["default_sub_model"] = sub_models[idx]
