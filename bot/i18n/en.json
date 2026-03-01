@@ -21,7 +21,8 @@
     "invalid_token_verify": "Invalid token. Please check.",
     "self_token": "Cannot connect the current bot's own token.",
     "already_connected": "Already connected: @{name}",
-    "unknown_model": "Unknown model: {name}\nAvailable: {aliases}"
+    "unknown_model": "Unknown model: {name}\nAvailable: {aliases}",
+    "provider_disabled": "{name} is not enabled.\nChange AI providers in /settings."
   },
   "session": {
     "none": "No sessions found.",
