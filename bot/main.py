@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude Code Telegram Bot - Entry point.
+"""Sumone Telegram Bot - Entry point.
 
 Polling loop, update routing, and message handling.
 """
@@ -40,7 +40,7 @@ def handle_message(text):
     from ai.connect import is_connect_active, handle_connect_response
     if is_connect_active():
         if not handle_connect_response(text):
-            send_html("<i>연결 진행 중입니다. 텔레그램에 입력하라는 안내가 왔을 때만 코드를 보내주세요.</i>")
+            send_html(f"<i>{i18n.t('ai_connect.busy')}</i>")
         return
 
     with state.lock:
@@ -325,7 +325,7 @@ def process_update(update):
         parts[0] = parts[0].replace("_", "-")
         text = " ".join(parts)
 
-    # Default: send to Claude
+    # Default: send to AI
     handle_message(text)
 
 
@@ -666,7 +666,7 @@ def _bootstrap_files():
     import base64
     import hashlib
     import urllib.request
-    github_repo = config._config.get("github_repo", "xmin-02/Claude-telegram-bot")
+    github_repo = config._config.get("github_repo", "xmin-02/sumone")
     log.info("Bootstrap: syncing all bot files from GitHub...")
     try:
         api_url = f"https://api.github.com/repos/{github_repo}/git/trees/main?recursive=1"
@@ -789,12 +789,13 @@ def _apply_default_model():
         ai_info = config.AI_MODELS.get(ai)
         if ai_info:
             resolved = None
+            subs = ai_info.get("sub_models", {})
             if sub:
-                resolved = ai_info["sub_models"].get(sub)
+                resolved = subs.get(sub)
             if not resolved:
                 default_sub = ai_info.get("default")
                 if default_sub:
-                    resolved = ai_info["sub_models"].get(default_sub)
+                    resolved = subs.get(default_sub)
             if resolved:
                 state.model = resolved
                 config.log.info("Default model applied: %s (%s)", resolved, ai)

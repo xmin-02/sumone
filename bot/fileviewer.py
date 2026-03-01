@@ -2536,7 +2536,7 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                     switch_provider(ai)
                     ai_info = AI_MODELS.get(ai)
                     if ai_info and sub:
-                        resolved = ai_info["sub_models"].get(sub)
+                        resolved = ai_info.get("sub_models", {}).get(sub)
                         if resolved:
                             _st.model = resolved
                         else:

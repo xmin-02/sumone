@@ -70,7 +70,7 @@ def handle_model(text):
         prov_info = AI_MODELS[default_prov]
         subs = prov_info.get("sub_models", {})
         default_sub = prov_info.get("default", list(subs.keys())[0] if subs else None)
-        state.model = prov_info["sub_models"].get(default_sub)
+        state.model = subs.get(default_sub)
         state._provider_models[state.provider] = state.model
         update_config("model", state.model)
         update_config("provider_models", dict(state._provider_models))
@@ -107,7 +107,7 @@ def handle_model(text):
         prov_info = AI_MODELS[name]
         if not state.model:
             default_sub = prov_info.get("default")
-            state.model = prov_info["sub_models"].get(default_sub) if default_sub else None
+            state.model = prov_info.get("sub_models", {}).get(default_sub) if default_sub else None
         state._provider_models[state.provider] = state.model
         label = prov_info.get("label", name.title())
         model_display = escape_html(state.model) if state.model else t('model.cli_default')

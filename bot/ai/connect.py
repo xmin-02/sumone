@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import i18n
 from config import AI_MODELS, IS_WINDOWS, log
 from state import get_provider_env, set_provider_auth
 
@@ -60,7 +61,7 @@ def _sanitize_cli_output(text):
         secret = (_connect_state.get("last_user_input") or "").strip()
     # Only mask long values (e.g., OAuth auth codes), not short menu inputs like "1" or "y".
     if len(secret) >= 8:
-        clean = clean.replace(secret, "[입력값 숨김]")
+        clean = clean.replace(secret, i18n.t("ai_connect.input_masked"))
     return clean
 
 
@@ -132,9 +133,9 @@ def _exchange_claude_manual_code(raw_text, expected_state, code_verifier):
     """Exchange a Claude manual auth code for OAuth tokens."""
     code, state = _parse_claude_auth_payload(raw_text)
     if not code or not state:
-        raise RuntimeError("인증 문자열 형식이 올바르지 않습니다.")
+        raise RuntimeError(i18n.t("ai_connect.invalid_auth_format"))
     if expected_state and state != expected_state:
-        raise RuntimeError("인증 문자열의 state 값이 현재 세션과 일치하지 않습니다.")
+        raise RuntimeError(i18n.t("ai_connect.state_mismatch"))
     payload = {
         "grant_type": "authorization_code",
         "code": code,
@@ -159,14 +160,14 @@ def _exchange_claude_manual_code(raw_text, expected_state, code_verifier):
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         detail = body[-300:] if body else str(e)
-        raise RuntimeError(f"토큰 교환 실패 (HTTP {e.code}): {detail}") from e
+        raise RuntimeError(i18n.t("ai_connect.token_exchange_http_fail", code=e.code, detail=detail)) from e
     except Exception as e:
-        raise RuntimeError(f"토큰 교환 실패: {e}") from e
+        raise RuntimeError(i18n.t("ai_connect.token_exchange_fail", error=e)) from e
 
     access_token = (data or {}).get("access_token")
     refresh_token = (data or {}).get("refresh_token")
     if not access_token or not refresh_token:
-        raise RuntimeError("토큰 교환 응답에 access_token 또는 refresh_token 이 없습니다.")
+        raise RuntimeError(i18n.t("ai_connect.token_no_tokens"))
     account = (data or {}).get("account") or {}
     organization = (data or {}).get("organization") or {}
     auth = {
@@ -223,22 +224,19 @@ def _send_prompt_to_telegram(provider, prompt_type, data, raw_text):
         url = data[0]
         # Extract device code if present (e.g. "3XQR-0J450")
         code_match = re.search(r'\b([A-Z0-9]{4}-[A-Z0-9]{4,6})\b', clean)
-        code_line = f"\n\n🔑 인증 코드: <code>{code_match.group(1)}</code>" if code_match else ""
+        code_line = "\n\n" + i18n.t("ai_connect.auth_code", code=code_match.group(1)) if code_match else ""
         # Check if auth code input is needed (Gemini)
         needs_code = "authorization code" in clean.lower()
         if provider == "claude":
-            footer = (
-                "\n\n이 단계는 브라우저 로그인 단계입니다."
-                "\n잠시 후 코드 입력 안내가 오면, 브라우저에서 받은 전체 값을 텔레그램에 입력해주세요."
-            )
+            footer = "\n\n" + i18n.t("ai_connect.url_footer_claude")
         elif needs_code:
-            footer = "\n\n로그인 후 표시되는 인증 코드를 여기에 입력해주세요."
+            footer = "\n\n" + i18n.t("ai_connect.url_footer_code_needed")
         else:
-            footer = "\n\n추가로 코드 입력 안내가 오지 않으면, 텔레그램에 별도 입력은 필요 없습니다."
-        buttons = [[{"text": "🔗 인증하기", "url": url}]]
+            footer = "\n\n" + i18n.t("ai_connect.url_footer_no_code")
+        buttons = [[{"text": i18n.t("ai_connect.auth_button"), "url": url}]]
         result = tg_api("sendMessage", {
             "chat_id": CHAT_ID,
-            "text": f"🔌 <b>{prov_label}</b> 인증\n\n아래 버튼을 눌러 브라우저에서 로그인하세요.{code_line}{footer}",
+            "text": i18n.t("ai_connect.url_message", label=prov_label, code_line=code_line, footer=footer),
             "parse_mode": "HTML",
             "reply_markup": json.dumps({"inline_keyboard": buttons}),
         })
@@ -246,8 +244,8 @@ def _send_prompt_to_telegram(provider, prompt_type, data, raw_text):
 
     elif prompt_type == "yn":
         buttons = [[
-            {"text": "✅ 예", "callback_data": f"connect:y"},
-            {"text": "❌ 아니오", "callback_data": f"connect:n"},
+            {"text": i18n.t("ai_connect.yes"), "callback_data": "connect:y"},
+            {"text": i18n.t("ai_connect.no"), "callback_data": "connect:n"},
         ]]
         result = tg_api("sendMessage", {
             "chat_id": CHAT_ID,
@@ -263,7 +261,7 @@ def _send_prompt_to_telegram(provider, prompt_type, data, raw_text):
                    for i, item in enumerate(items[:10])]
         result = tg_api("sendMessage", {
             "chat_id": CHAT_ID,
-            "text": f"🔌 <b>{prov_label}</b> 선택해주세요:\n<code>{clean[-300:]}</code>",
+            "text": f"{i18n.t('ai_connect.select_prompt', label=prov_label)}\n<code>{clean[-300:]}</code>",
             "parse_mode": "HTML",
             "reply_markup": json.dumps({"inline_keyboard": buttons}),
         })
@@ -274,7 +272,7 @@ def _send_prompt_to_telegram(provider, prompt_type, data, raw_text):
     elif prompt_type == "text":
         result = tg_api("sendMessage", {
             "chat_id": CHAT_ID,
-            "text": f"🔌 <b>{prov_label}</b>\n<code>{clean[-300:]}</code>\n\n입력 후 전송해주세요.",
+            "text": f"🔌 <b>{prov_label}</b>\n<code>{clean[-300:]}</code>\n\n{i18n.t('ai_connect.text_prompt')}",
             "parse_mode": "HTML",
         })
         return (result or {}).get("result", {}).get("message_id")
@@ -317,10 +315,10 @@ def _install_cli(provider, info):
     prov_label = info.get("label", provider.title())
     install_cmd = info.get("install_cmd")
     if not install_cmd:
-        send_html(f"❌ {prov_label}의 설치 명령어가 설정되지 않았습니다.")
+        send_html(i18n.t("ai_connect.no_install_cmd", label=prov_label))
         return False
 
-    send_html(f"📦 <b>{prov_label}</b> CLI 설치 중...\n<code>{' '.join(install_cmd)}</code>")
+    send_html(f"{i18n.t('ai_connect.installing', label=prov_label)}\n<code>{' '.join(install_cmd)}</code>")
     log.info("Installing %s CLI: %s", provider, install_cmd)
 
     try:
@@ -345,18 +343,18 @@ def _install_cli(provider, info):
                         log.info("Removed quarantine from %s", real_path)
                     except Exception:
                         pass
-            send_html(f"✅ <b>{prov_label}</b> CLI 설치 완료!")
+            send_html(i18n.t("ai_connect.install_ok", label=prov_label))
             return True
         else:
             err_msg = (result.stderr or result.stdout or "unknown error")[-500:]
             log.error("%s CLI install failed: %s", provider, err_msg)
-            send_html(f"❌ <b>{prov_label}</b> CLI 설치 실패:\n<code>{err_msg}</code>")
+            send_html(f"{i18n.t('ai_connect.install_fail', label=prov_label)}\n<code>{err_msg}</code>")
             return False
     except subprocess.TimeoutExpired:
-        send_html(f"❌ <b>{prov_label}</b> CLI 설치 시간 초과 (5분)")
+        send_html(i18n.t("ai_connect.install_timeout", label=prov_label))
         return False
     except Exception as e:
-        send_html(f"❌ <b>{prov_label}</b> CLI 설치 오류: {e}")
+        send_html(i18n.t("ai_connect.install_error", label=prov_label, error=e))
         return False
 
 
@@ -391,7 +389,7 @@ def run_connect_flow(provider):
 
     info = AI_MODELS.get(provider)
     if not info:
-        send_html(f"❌ 알 수 없는 provider: {provider}")
+        send_html(i18n.t("ai_connect.unknown_provider", name=provider))
         return
 
     cli_cmd = info.get("cli_cmd", provider)
@@ -403,7 +401,7 @@ def run_connect_flow(provider):
             return
         # Re-check after install
         if not _is_cli_installed(cli_cmd):
-            send_html(f"❌ 설치 후에도 <b>{cli_cmd}</b> 명령어를 찾을 수 없습니다.")
+            send_html(i18n.t("ai_connect.cli_not_found", cmd=cli_cmd))
             return
 
     # Step 2: Clear existing auth for re-authentication
@@ -412,7 +410,7 @@ def run_connect_flow(provider):
             _ensure_gemini_oauth_mode()
         except Exception as e:
             log.error("Failed to prepare Gemini auth mode: %s", e)
-            send_html(f"❌ <b>{prov_label}</b> 설정 준비 실패: <code>{e}</code>")
+            send_html(i18n.t("ai_connect.setup_fail", label=prov_label, error=e))
             return
         for f in ["oauth_creds.json", "google_accounts.json"]:
             p = os.path.expanduser(f"~/.gemini/{f}")
@@ -440,7 +438,7 @@ def run_connect_flow(provider):
                 "oauth_code_verifier": verifier,
                 "oauth_state": oauth_state,
             })
-        send_html(f"🔌 <b>{prov_label}</b> 연결 중...")
+        send_html(i18n.t("ai_connect.connecting", label=prov_label))
         msg_id = _send_prompt_to_telegram(provider, "url", [url], url)
         with _connect_lock:
             _connect_state["msg_id"] = msg_id
@@ -455,7 +453,7 @@ def run_connect_flow(provider):
         return
 
     if IS_WINDOWS:
-        send_html(f"❌ Windows에서는 PTY 연결이 지원되지 않습니다.")
+        send_html(i18n.t("ai_connect.pty_not_supported"))
         return
 
     import shutil
@@ -465,7 +463,7 @@ def run_connect_flow(provider):
     try:
         pid, fd = pty.fork()
     except Exception as e:
-        send_html(f"❌ PTY 생성 실패: {e}")
+        send_html(i18n.t("ai_connect.pty_fail", error=e))
         return
 
     if pid == 0:
@@ -502,7 +500,7 @@ def run_connect_flow(provider):
             "oauth_state": "",
         })
 
-    send_html(f"🔌 <b>{prov_label}</b> 연결 중...")
+    send_html(i18n.t("ai_connect.connecting", label=prov_label))
 
     buf = ""
     last_output_time = time.time()
@@ -574,8 +572,7 @@ def run_connect_flow(provider):
                 break
 
             if url_prompt_time and (time.time() - url_prompt_time) >= URL_WAIT_TIMEOUT:
-                hint = f"⏰ <b>{prov_label}</b> 인증 대기 시간이 초과되었습니다. 다시 시도해주세요."
-                _cancel_connect_flow(hint)
+                _cancel_connect_flow(i18n.t("ai_connect.auth_timeout", label=prov_label))
                 return
 
     except Exception as e:
@@ -604,7 +601,7 @@ def run_connect_flow(provider):
     _st.cli_status[provider] = authenticated
 
     if authenticated:
-        send_html(f"✅ <b>{prov_label}</b> 연결 완료!")
+        send_html(i18n.t("ai_connect.connected", label=prov_label))
     else:
         lower_buf = clean_buf.lower()
         if provider == "gemini" and (
@@ -612,13 +609,9 @@ def run_connect_flow(provider):
             or "please set an auth method" in lower_buf
             or "authorization code" in lower_buf
         ):
-            send_html(
-                "❌ <b>Gemini</b> 연결 실패.\n"
-                "브라우저 인증 후 받은 코드를 텔레그램에 그대로 입력해주세요.\n"
-                "필요하면 <b>연결하기</b>를 다시 눌러 재시도하세요."
-            )
+            send_html(i18n.t("ai_connect.gemini_fail"))
             return
-        send_html(f"❌ <b>{prov_label}</b> 연결 실패. 다시 시도해주세요.")
+        send_html(i18n.t("ai_connect.connect_fail", label=prov_label))
 
 
 def _wait_for_completion(pid, fd, provider, prov_label):
@@ -652,9 +645,9 @@ def _wait_for_completion(pid, fd, provider, prov_label):
     _st.cli_status[provider] = authenticated
 
     if authenticated:
-        send_html(f"✅ <b>{prov_label}</b> 연결 완료!")
+        send_html(i18n.t("ai_connect.connected", label=prov_label))
     else:
-        send_html(f"⏳ 인증을 완료했다면 <b>/restart_bot</b> 으로 재시작해주세요.")
+        send_html(i18n.t("ai_connect.auth_restart_hint"))
 
 
 def _cancel_connect_flow(message):
@@ -692,7 +685,7 @@ def _wait_for_user_input(fd, provider):
     if response:
         try:
             os.write(fd, (response + "\n").encode("utf-8"))
-            log.info("Wrote to PTY: %r", "[입력값 숨김]" if len(response) >= 8 else response)
+            log.info("Wrote to PTY: %r", i18n.t("ai_connect.input_masked") if len(response) >= 8 else response)
         except OSError as e:
             log.error("PTY write error: %s", e)
         return
@@ -700,7 +693,7 @@ def _wait_for_user_input(fd, provider):
     _user_response_event.clear()
     timeout = 120
     if not _user_response_event.wait(timeout=timeout):
-        send_html("⏰ 입력 시간 초과. 연결을 중단합니다.")
+        send_html(i18n.t("ai_connect.input_timeout"))
         with _connect_lock:
             _connect_state["active"] = False
         return
@@ -741,10 +734,7 @@ def handle_connect_response(text):
                 if not _connect_state["active"]:
                     return False
             if not url_prompt_sent:
-                send_html(
-                    "ℹ️ <b>Claude</b> 인증 URL이 아직 표시되기 전입니다.\n"
-                    "브라우저 로그인 안내가 나온 뒤에 인증 문자열을 보내주세요."
-                )
+                send_html(i18n.t("ai_connect.claude_auth_early"))
                 return True
             if code_verifier:
                 try:
@@ -754,7 +744,7 @@ def handle_connect_response(text):
                     _st.cli_status["claude"] = _check_auth("claude", AI_MODELS.get("claude", {}).get("cli_cmd", "claude"))
                 except Exception as e:
                     send_html(
-                        "❌ <b>Claude</b> 토큰 교환에 실패했습니다.\n"
+                        f"{i18n.t('ai_connect.claude_token_fail')}\n"
                         f"<code>{_strip_ansi(str(e))[-300:]}</code>"
                     )
                     return True
@@ -765,7 +755,7 @@ def handle_connect_response(text):
                     _connect_state["url_prompt_sent"] = False
                     _connect_state["oauth_code_verifier"] = ""
                     _connect_state["oauth_state"] = ""
-                send_html("✅ <b>Claude</b> 연결 완료!")
+                send_html(i18n.t("ai_connect.connected", label="Claude"))
                 return True
             return True
         return False
@@ -787,10 +777,10 @@ def handle_connect_response(text):
                     _connect_state["_pending_response"] = str(idx)
                     _connect_state["waiting"] = None
                 else:
-                    send_html(f"1 ~ {len(items)} 사이의 숫자를 입력해주세요.")
+                    send_html(i18n.t("ai_connect.invalid_menu_choice", max=len(items)))
                     return True
             except ValueError:
-                send_html("숫자를 입력해주세요.")
+                send_html(i18n.t("ai_connect.enter_number"))
                 return True
         else:
             _connect_state["_pending_response"] = text.strip()
