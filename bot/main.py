@@ -779,8 +779,11 @@ def _detect_cli_status():
                     [resolved, "login", "status"], capture_output=True, timeout=5, env=env
                 ).returncode == 0
             elif provider == "gemini":
-                state.cli_status[provider] = os.path.isfile(
-                    os.path.expanduser("~/.gemini/oauth_creds.json"))
+                gdir = os.path.expanduser("~/.gemini")
+                state.cli_status[provider] = (
+                    os.path.isfile(os.path.join(gdir, "oauth_creds.json"))
+                    or os.path.isfile(os.path.join(gdir, "google_accounts.json"))
+                )
             else:  # claude
                 state.cli_status[provider] = _sp.run(
                     [resolved, "auth", "status"], capture_output=True, timeout=5, env=env
