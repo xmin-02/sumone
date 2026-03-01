@@ -960,16 +960,15 @@ def _migrate_old_layout():
         migrated.append("bot code → ~/.sumone/bot/")
         config.log.info("Bot code copied to %s", new_bot_dir)
 
-    # --- Update autostart configs (always target ~/.sumone/bot/) ---
-    _update_launchd_plist(new_bot_dir)
-    _update_windows_task(new_bot_dir)
-    _update_systemd_service(new_bot_dir)
-
     if migrated:
         config.log.info("Migration complete: %s", ", ".join(migrated))
 
     # --- Re-exec from new location ---
     if running_from_old:
+        # Update autostart configs only when migrating from old location
+        _update_launchd_plist(new_bot_dir)
+        _update_windows_task(new_bot_dir)
+        _update_systemd_service(new_bot_dir)
         new_main = os.path.join(new_bot_dir, "main.py")
         if os.path.isfile(new_main):
             config.log.info("Re-executing from new location: %s", new_main)
@@ -1044,7 +1043,7 @@ def _update_windows_task(target_bot_dir):
         try:
             result = _sp.run(
                 ["schtasks", "/Query", "/TN", task_name],
-                capture_output=True, text=True,
+                capture_output=True, text=True, timeout=10,
                 creationflags=_sp.CREATE_NO_WINDOW,
             )
             if result.returncode != 0:
@@ -1053,11 +1052,13 @@ def _update_windows_task(target_bot_dir):
             _sp.run(
                 ["schtasks", "/Change", "/TN", task_name,
                  "/TR", f'"{python_path}" "{bot_main}"'],
-                capture_output=True, text=True,
+                capture_output=True, text=True, timeout=10,
                 creationflags=_sp.CREATE_NO_WINDOW,
             )
             config.log.info("Windows Task Scheduler updated: %s", task_name)
             return
+        except _sp.TimeoutExpired:
+            config.log.warning("schtasks timed out for task %s, skipping", task_name)
         except Exception as e:
             config.log.warning("Failed to update Windows task %s: %s", task_name, e)
 
