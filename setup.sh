@@ -31,7 +31,7 @@ print_banner() {
     echo '  ║   ███████║╚██████╔╝██║ ╚═╝ ██║╚██████╔╝██║ ╚████║   ║'
     echo '  ║   ╚══════╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ║'
     echo '  ║                                                      ║'
-    echo -e "  ║${NC}${DIM}        Omni AI Orchestration       ${NC}${BOLD}${CYAN}║"
+    echo -e "  ║${NC}${DIM}                 Omni AI Orchestration                ${NC}${BOLD}${CYAN}║"
     echo '  ╚══════════════════════════════════════════════════════╝'
     echo -e "${NC}"
 }
