@@ -2310,8 +2310,6 @@ class _ViewerHandler(BaseHTTPRequestHandler):
 
         if action == "settings":
             body = _page_settings(session_token)
-            with open("/tmp/_debug_settings.html", "w") as _df:
-                _df.write(body)
             self._send_html(200, body)
             return
 
