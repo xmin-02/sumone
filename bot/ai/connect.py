@@ -10,10 +10,12 @@ import base64
 import json
 import os
 import re
-import pty
-import select
+import sys
 import subprocess
-import termios
+if sys.platform != "win32":
+    import pty
+    import select
+    import termios
 import threading
 import time
 import hashlib
