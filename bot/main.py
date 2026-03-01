@@ -763,6 +763,15 @@ def _detect_cli_status():
         if not resolved:
             state.cli_status[provider] = False
             continue
+        # Gemini CLI .CMD wrapper hangs in subprocess on Windows,
+        # so skip --version check and use auth-file detection only.
+        if provider == "gemini":
+            gdir = os.path.expanduser("~/.gemini")
+            state.cli_status[provider] = (
+                os.path.isfile(os.path.join(gdir, "oauth_creds.json"))
+                or os.path.isfile(os.path.join(gdir, "google_accounts.json"))
+            )
+            continue
         try:
             r = _sp.run([resolved, "--version"], capture_output=True, timeout=5)
             if r.returncode != 0:
@@ -778,9 +787,6 @@ def _detect_cli_status():
                 state.cli_status[provider] = _sp.run(
                     [resolved, "login", "status"], capture_output=True, timeout=5, env=env
                 ).returncode == 0
-            elif provider == "gemini":
-                state.cli_status[provider] = os.path.isfile(
-                    os.path.expanduser("~/.gemini/oauth_creds.json"))
             else:  # claude
                 state.cli_status[provider] = _sp.run(
                     [resolved, "auth", "status"], capture_output=True, timeout=5, env=env
