@@ -10,6 +10,10 @@ import sys
 import threading
 import time
 
+# Unix lock file support (prevents duplicate instances under launchd)
+if sys.platform != "win32":
+    import fcntl
+
 import i18n
 import config
 from config import BOT_TOKEN, CHAT_ID, POLL_TIMEOUT, IS_WINDOWS, settings, log
@@ -481,6 +485,31 @@ def _sync_bot_commands():
 # Polling loop
 # ---------------------------------------------------------------------------
 
+_lock_fd = None
+
+
+def _acquire_instance_lock():
+    """Acquire exclusive lock file. Exit(0) if another instance is running.
+
+    On macOS/Linux with launchd KeepAlive={SuccessfulExit:false},
+    exit(0) tells launchd NOT to restart — preventing kill-restart loops.
+    """
+    global _lock_fd
+    if IS_WINDOWS:
+        return  # Windows uses _kill_duplicate_bots() instead
+    lock_path = os.path.join(config.ROOT_DIR, "bot.lock")
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    try:
+        _lock_fd = open(lock_path, "w")
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_fd.write(str(os.getpid()))
+        _lock_fd.flush()
+        log.info("Instance lock acquired (PID %d)", os.getpid())
+    except (IOError, OSError):
+        log.info("Another bot instance is already running. Exiting cleanly.")
+        sys.exit(0)
+
+
 def _kill_duplicate_bots():
     """Find and kill other bot processes (same script), return count killed."""
     import subprocess as _sp
@@ -594,8 +623,8 @@ def poll_loop():
     offset = 0
     log.info("Bot started.")
 
-    # Kill duplicate bot processes before anything else
-    killed = _kill_duplicate_bots()
+    # Kill duplicate bot processes (Windows only; Unix uses lock file)
+    killed = _kill_duplicate_bots() if IS_WINDOWS else 0
 
     _sync_bot_commands()
 
@@ -980,7 +1009,10 @@ def _update_launchd_plist(target_bot_dir):
                 f'    <array><string>{python_path}</string>'
                 f'<string>{bot_main}</string></array>\n'
                 '    <key>RunAtLoad</key><true/>\n'
-                '    <key>KeepAlive</key><true/>\n'
+                '    <key>KeepAlive</key>\n'
+                '    <dict>\n'
+                '        <key>SuccessfulExit</key><false/>\n'
+                '    </dict>\n'
                 f'    <key>StandardOutPath</key><string>{log_dir}/bot-stdout.log</string>\n'
                 f'    <key>StandardErrorPath</key><string>{log_dir}/bot-stderr.log</string>\n'
                 '</dict></plist>\n'
@@ -1091,6 +1123,7 @@ def main():
         except (AttributeError, OSError):
             pass
 
+    _acquire_instance_lock()
     poll_loop()
 
 
