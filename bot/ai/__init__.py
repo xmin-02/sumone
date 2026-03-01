@@ -117,7 +117,6 @@ class BaseRunner:
                 cwd=_cfg.WORK_DIR, env=env,
             )
             if IS_WINDOWS:
-                popen_kwargs["shell"] = True
                 popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
             with state.lock:
@@ -541,23 +540,15 @@ class BaseRunner:
     @classmethod
     def _find_cli_cmd(cls, candidates):
         """Find CLI command (cached). Prevents repeated lookups per instance."""
+        import shutil
         cache_key = cls.PROVIDER
         if cache_key in cls._cli_cmd_cache:
             return cls._cli_cmd_cache[cache_key]
         for cmd in candidates:
-            try:
-                kw = {}
-                if IS_WINDOWS:
-                    kw["shell"] = True
-                    kw["creationflags"] = subprocess.CREATE_NO_WINDOW
-                result = subprocess.run(
-                    [cmd, "--version"], capture_output=True, timeout=10, **kw,
-                )
-                if result.returncode == 0:
-                    cls._cli_cmd_cache[cache_key] = cmd
-                    return cmd
-            except Exception:
-                continue
+            resolved = shutil.which(cmd)
+            if resolved:
+                cls._cli_cmd_cache[cache_key] = resolved
+                return resolved
         fallback = candidates[0]
         cls._cli_cmd_cache[cache_key] = fallback
         return fallback
