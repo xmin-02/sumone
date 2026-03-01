@@ -1,5 +1,5 @@
 # ============================================================================
-# sumone - Claude · Codex · Gemini Telegram Bot
+# sumone - Omni AI Orchestration
 # Setup Script (Windows / PowerShell)
 # Usage: powershell -ExecutionPolicy Bypass -File setup.ps1
 # ============================================================================
@@ -36,7 +36,7 @@ function Print-Banner {
     Write-Host "  |   ███████║╚██████╔╝██║ ╚═╝ ██║╚██████╔╝██║ ╚████║   |" -ForegroundColor Cyan
     Write-Host "  |   ╚══════╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   |" -ForegroundColor Cyan
     Write-Host "  |                                                      |" -ForegroundColor Cyan
-    Write-Host "  |        Claude · Codex · Gemini Telegram Bot         |" -ForegroundColor DarkGray
+    Write-Host "  |        Omni AI Orchestration         |" -ForegroundColor DarkGray
     Write-Host "  +======================================================+" -ForegroundColor Cyan
     Write-Host ""
 }

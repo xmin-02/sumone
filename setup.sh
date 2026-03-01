@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# sumone - Claude · Codex · Gemini Telegram Bot
+# sumone - Omni AI Orchestration
 # Setup Script (Linux / macOS / WSL)
 # ============================================================================
 set -euo pipefail
@@ -31,7 +31,7 @@ print_banner() {
     echo '  ║   ███████║╚██████╔╝██║ ╚═╝ ██║╚██████╔╝██║ ╚████║   ║'
     echo '  ║   ╚══════╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ║'
     echo '  ║                                                      ║'
-    echo -e "  ║${NC}${DIM}        Claude · Codex · Gemini Telegram Bot       ${NC}${BOLD}${CYAN}║"
+    echo -e "  ║${NC}${DIM}        Omni AI Orchestration       ${NC}${BOLD}${CYAN}║"
     echo '  ╚══════════════════════════════════════════════════════╝'
     echo -e "${NC}"
 }
