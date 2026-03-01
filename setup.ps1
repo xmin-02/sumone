@@ -29,14 +29,14 @@ function Print-Banner {
     Write-Host ""
     Write-Host "  +======================================================+" -ForegroundColor Cyan
     Write-Host "  |                                                      |" -ForegroundColor Cyan
-    Write-Host "  |   ███████╗██╗   ██╗███╗   ███╗ ██████╗ ███╗   ██╗   |" -ForegroundColor Cyan
-    Write-Host "  |   ██╔════╝██║   ██║████╗ ████║██╔═══██╗████╗  ██║   |" -ForegroundColor Cyan
-    Write-Host "  |   ███████╗██║   ██║██╔████╔██║██║   ██║██╔██╗ ██║   |" -ForegroundColor Cyan
-    Write-Host "  |   ╚════██║██║   ██║██║╚██╔╝██║██║   ██║██║╚██╗██║   |" -ForegroundColor Cyan
-    Write-Host "  |   ███████║╚██████╔╝██║ ╚═╝ ██║╚██████╔╝██║ ╚████║   |" -ForegroundColor Cyan
-    Write-Host "  |   ╚══════╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   |" -ForegroundColor Cyan
+    Write-Host "  |   ███████╗██╗   ██╗███╗   ███╗ ██████╗ ███╗   ██╗    |" -ForegroundColor Cyan
+    Write-Host "  |   ██╔════╝██║   ██║████╗ ████║██╔═══██╗████╗  ██║    |" -ForegroundColor Cyan
+    Write-Host "  |   ███████╗██║   ██║██╔████╔██║██║   ██║██╔██╗ ██║    |" -ForegroundColor Cyan
+    Write-Host "  |   ╚════██║██║   ██║██║╚██╔╝██║██║   ██║██║╚██╗██║    |" -ForegroundColor Cyan
+    Write-Host "  |   ███████║╚██████╔╝██║ ╚═╝ ██║╚██████╔╝██║ ╚████║    |" -ForegroundColor Cyan
+    Write-Host "  |   ╚══════╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═══╝    |" -ForegroundColor Cyan
     Write-Host "  |                                                      |" -ForegroundColor Cyan
-    Write-Host "  |        Omni AI Orchestration         |" -ForegroundColor DarkGray
+    Write-Host "  |        Omni AI Orchestration            |" -ForegroundColor DarkGray
     Write-Host "  +======================================================+" -ForegroundColor Cyan
     Write-Host ""
 }
