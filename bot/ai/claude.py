@@ -1,13 +1,16 @@
 """Claude CLI runner."""
+import json
 import os
 import re
 import shlex
 import subprocess
+import urllib.error
+import urllib.request
 
 from ai import BaseRunner, ParsedEvent
 from config import IS_WINDOWS, log
 import config as _cfg
-from state import state
+from state import state, get_provider_auth, get_provider_env, set_provider_auth
 
 
 def _parse_deleted_paths(command, cwd=None):
@@ -86,9 +89,60 @@ class ClaudeRunner(BaseRunner):
             cmd += ["--model", state.model]
         return cmd
 
+    def _refresh_oauth_token(self):
+        """Refresh stored Claude OAuth access token if a refresh token exists."""
+        auth = get_provider_auth("claude")
+        refresh = auth.get("oauth_refresh_token")
+        if not refresh:
+            return
+
+        payload = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh,
+            "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        }
+        req = urllib.request.Request(
+            "https://platform.claude.com/v1/oauth/token",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "claude-telegram-bot/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+                data = json.loads(body or "{}")
+        except Exception as e:
+            log.warning("Claude OAuth refresh failed: %s", e)
+            return
+
+        access_token = data.get("access_token")
+        new_refresh = data.get("refresh_token") or refresh
+        if not access_token:
+            log.warning("Claude OAuth refresh returned no access_token")
+            return
+
+        updated = dict(auth)
+        updated["oauth_token"] = access_token
+        updated["oauth_refresh_token"] = new_refresh
+        account = data.get("account") or {}
+        organization = data.get("organization") or {}
+        if account.get("uuid"):
+            updated["account_uuid"] = account["uuid"]
+        if account.get("email_address"):
+            updated["user_email"] = account["email_address"]
+        if organization.get("uuid"):
+            updated["organization_uuid"] = organization["uuid"]
+        set_provider_auth("claude", updated)
+        log.info("Claude OAuth token refreshed")
+
     def _build_env(self):
+        self._refresh_oauth_token()
         env = super()._build_env()
         env["CLAUDE_TELEGRAM_BOT"] = "1"
+        env.update(get_provider_env("claude"))
         return env
 
     def _parse_event(self, event):
@@ -176,7 +230,12 @@ class ClaudeRunner(BaseRunner):
             return results
 
         if etype == "result":
+            errors = event.get("errors", [])
             result_text = event.get("result", "")
+            if not result_text and isinstance(errors, list):
+                result_text = "\n".join(
+                    err for err in errors if isinstance(err, str) and err.strip()
+                )
             usage = event.get("usage", {})
             return [ParsedEvent(
                 kind="result",
@@ -189,6 +248,8 @@ class ClaudeRunner(BaseRunner):
                            + usage.get("cache_read_input_tokens", 0)),
                 tokens_out=usage.get("output_tokens", 0),
                 tokens_cached=usage.get("cache_read_input_tokens", 0),
+                is_error=bool(event.get("is_error")),
+                errors=errors if isinstance(errors, list) else [],
             )]
 
         return [ParsedEvent(session_id=sid)]

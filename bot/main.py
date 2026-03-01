@@ -47,7 +47,8 @@ def handle_message(text):
     # Route to connect flow if active
     from ai.connect import is_connect_active, handle_connect_response
     if is_connect_active():
-        handle_connect_response(text)
+        if not handle_connect_response(text):
+            send_html("<i>연결 진행 중입니다. 텔레그램에 입력하라는 안내가 왔을 때만 코드를 보내주세요.</i>")
         return
 
     with state.lock:
@@ -716,6 +717,7 @@ def _detect_cli_status():
     """Detect which AI CLIs are installed. Runs at startup and caches in state.cli_status."""
     import subprocess as _sp
     import shutil as _sh
+    from state import get_provider_env
     # Ensure common CLI paths are in PATH (exec may strip them)
     _extra = [os.path.expanduser("~/.local/bin"), "/opt/homebrew/bin", "/opt/homebrew/sbin",
               "/usr/local/bin"]
@@ -727,7 +729,7 @@ def _detect_cli_status():
     _auth_checks = {
         "codex": lambda res: _sp.run([res, "login", "status"], capture_output=True, timeout=5).returncode == 0,
         "gemini": lambda res: os.path.isfile(os.path.expanduser("~/.gemini/oauth_creds.json")),
-        "claude": lambda res: True,  # claude auth is checked at runtime
+        "claude": lambda res: _sp.run([res, "auth", "status"], capture_output=True, timeout=5).returncode == 0,
     }
     for provider, info in config.AI_MODELS.items():
         cmd = info.get("cli_cmd", provider)
@@ -745,8 +747,14 @@ def _detect_cli_status():
             continue
         # Check auth status
         try:
-            checker = _auth_checks.get(provider)
-            state.cli_status[provider] = checker(resolved) if checker else True
+            if provider == "claude":
+                env = {**os.environ, **get_provider_env("claude")}
+                state.cli_status[provider] = _sp.run(
+                    [resolved, "auth", "status"], capture_output=True, timeout=5, env=env
+                ).returncode == 0
+            else:
+                checker = _auth_checks.get(provider)
+                state.cli_status[provider] = checker(resolved) if checker else True
         except Exception:
             state.cli_status[provider] = False
     log.info("CLI status: %s", state.cli_status)
@@ -769,8 +777,14 @@ def _apply_default_model():
         if actual_prov != state.provider:
             state.session_id = None
     switch_provider(ai)
-    # Restore persisted model, or apply default from settings
-    saved_model = config._config.get("model")
+    # Restore the persisted model for the active provider first.
+    saved_model = state._provider_models.get(ai)
+    if not saved_model:
+        legacy_model = config._config.get("model")
+        if legacy_model:
+            ai_info = config.AI_MODELS.get(ai, {})
+            if legacy_model in ai_info.get("sub_models", {}).values():
+                saved_model = legacy_model
     if saved_model:
         state.model = saved_model
         config.log.info("Restored model: %s (%s)", saved_model, ai)
@@ -787,6 +801,7 @@ def _apply_default_model():
             if resolved:
                 state.model = resolved
                 config.log.info("Default model applied: %s (%s)", resolved, ai)
+    config.update_config("model", state.model)
 
 
 def main():

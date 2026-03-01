@@ -98,7 +98,9 @@ def handle_model(text):
         prov_info = AI_MODELS["claude"]
         default_sub = prov_info.get("default", "sonnet")
         state.model = prov_info["sub_models"].get(default_sub)
+        state._provider_models[state.provider] = state.model
         update_config("model", state.model)
+        update_config("provider_models", dict(state._provider_models))
         send_html(f"<b>{t('model.reset_done')}:</b> Claude - <code>{escape_html(state.model)}</code>"); return
     # Two-part command: /model [provider] [model]
     if name in AI_MODELS and len(args) >= 2:
@@ -114,8 +116,10 @@ def handle_model(text):
             switch_provider(name)
             state.model = model_arg
             resolved = model_arg
+        state._provider_models[state.provider] = state.model
         label = prov_info.get("label", name.title())
         update_config("model", state.model)
+        update_config("provider_models", dict(state._provider_models))
         send_html(f"<b>{t('model.changed')}:</b> {label} - <code>{escape_html(resolved)}</code>"); return
     # Provider-level switch: /model codex, /model gemini, /model claude
     if name in AI_MODELS:
@@ -124,9 +128,11 @@ def handle_model(text):
         if not state.model:
             default_sub = prov_info.get("default")
             state.model = prov_info["sub_models"].get(default_sub) if default_sub else None
+        state._provider_models[state.provider] = state.model
         label = prov_info.get("label", name.title())
         model_display = escape_html(state.model) if state.model else t('model.cli_default')
         update_config("model", state.model)
+        update_config("provider_models", dict(state._provider_models))
         send_html(f"<b>{t('model.changed')}:</b> {label} - <code>{model_display}</code>"); return
     # Resolve across all providers
     resolved, provider = resolve_model(name)
@@ -145,9 +151,11 @@ def handle_model(text):
                 all_aliases.update(info.get("sub_models", {}).keys())
             aliases = ", ".join(sorted(all_aliases))
             send_html(t("error.unknown_model", name=f"<code>{escape_html(name)}</code>", aliases=escape_html(aliases))); return
-    state.model = resolved
     switch_provider(provider)
+    state.model = resolved
+    state._provider_models[state.provider] = state.model
     update_config("model", state.model)
+    update_config("provider_models", dict(state._provider_models))
     provider_label = AI_MODELS.get(provider, {}).get("label", provider)
     send_html(f"<b>{t('model.changed')}:</b> {provider_label} - <code>{escape_html(resolved)}</code>")
 

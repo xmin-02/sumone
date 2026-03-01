@@ -47,6 +47,46 @@ def save_modified_files(entries):
         log.warning("Failed to save modified_files: %s", e)
 
 
+def _default_provider_stats():
+    return {
+        "claude": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
+        "codex": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
+        "gemini": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
+    }
+
+
+def _load_provider_stats():
+    stats = _default_provider_stats()
+    raw = _config.get("provider_stats")
+    if not isinstance(raw, dict):
+        return stats
+    for provider, default in stats.items():
+        row = raw.get(provider)
+        if not isinstance(row, dict):
+            continue
+        try:
+            default["cost"] = float(row.get("cost", 0.0) or 0.0)
+            default["tokens_in"] = int(row.get("tokens_in", 0) or 0)
+            default["tokens_out"] = int(row.get("tokens_out", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    return stats
+
+
+def _load_float(name, default=0.0):
+    try:
+        return float(_config.get(name, default) or 0.0)
+    except (TypeError, ValueError):
+        return default
+
+
+def _load_int(name, default=0):
+    try:
+        return int(_config.get(name, default) or 0)
+    except (TypeError, ValueError):
+        return default
+
+
 _current_run_id = 0  # incremented each AI run() call
 _current_run_label = ""  # user message for current run
 
@@ -171,18 +211,15 @@ class State:
     provider = "claude"
     _provider_sessions = _config.get("provider_sessions", {})   # {provider: session_id}
     _provider_models = _config.get("provider_models", {})     # {provider: model}
+    _provider_auth = _config.get("provider_auth", {})         # {provider: {auth config}}
     _run_gen = 0              # generation counter — bumped by /cancel to detect stale runs
     cli_status = {}           # {provider: bool} — True if CLI installed & runnable
-    provider_stats = {
-        "claude": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
-        "codex": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
-        "gemini": {"cost": 0.0, "tokens_in": 0, "tokens_out": 0},
-    }
+    provider_stats = _load_provider_stats()
     busy = False
     model = None
-    total_cost = 0.0
-    last_cost = 0.0
-    global_tokens = 0
+    total_cost = _load_float("total_cost", 0.0)
+    last_cost = _load_float("last_cost", 0.0)
+    global_tokens = _load_int("monthly_tokens", 0)
     waiting_token_input = False
     message_queue = collections.deque()
     lock = threading.Lock()
@@ -215,3 +252,48 @@ def switch_provider(new_provider):
     update_config("provider", new_provider)
     update_config("provider_sessions", dict(state._provider_sessions))
     update_config("provider_models", dict(state._provider_models))
+
+
+def get_provider_auth(provider):
+    """Return provider auth config as a dict."""
+    auth = state._provider_auth.get(provider)
+    return auth if isinstance(auth, dict) else {}
+
+
+def set_provider_auth(provider, auth):
+    """Persist auth config for a provider."""
+    if auth:
+        state._provider_auth[provider] = dict(auth)
+    else:
+        state._provider_auth.pop(provider, None)
+    from config import update_config
+    update_config("provider_auth", dict(state._provider_auth))
+
+
+def get_provider_env(provider):
+    """Build environment variables for provider-specific auth."""
+    auth = get_provider_auth(provider)
+    env = {}
+    if provider == "claude":
+        token = auth.get("oauth_token")
+        refresh = auth.get("oauth_refresh_token")
+        api_key = auth.get("api_key")
+        auth_token = auth.get("auth_token")
+        account_uuid = auth.get("account_uuid")
+        user_email = auth.get("user_email")
+        organization_uuid = auth.get("organization_uuid")
+        if token:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+        if refresh:
+            env["CLAUDE_CODE_OAUTH_REFRESH_TOKEN"] = refresh
+        if account_uuid:
+            env["CLAUDE_CODE_ACCOUNT_UUID"] = account_uuid
+        if user_email:
+            env["CLAUDE_CODE_USER_EMAIL"] = user_email
+        if organization_uuid:
+            env["CLAUDE_CODE_ORGANIZATION_UUID"] = organization_uuid
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+        if auth_token:
+            env["ANTHROPIC_AUTH_TOKEN"] = auth_token
+    return env

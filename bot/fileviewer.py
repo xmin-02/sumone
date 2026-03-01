@@ -1813,6 +1813,12 @@ var _sessionToken = '{session_token}';
 var _timeoutSecs = {timeout_seconds};
 var _timerRemaining = _timeoutSecs;
 var _timerInterval = null;
+var _initialSettings = JSON.parse(JSON.stringify(_settings));
+var _modelDirty = false;
+
+function _putIfChanged(out, key, value) {{
+  if (_initialSettings[key] !== value) out[key] = value;
+}}
 
 function _fmtTime(s) {{ var m=Math.floor(s/60),ss=s%60; return m+':'+(ss<10?'0':'')+ss; }}
 function _updateTimerDisplay() {{
@@ -1950,16 +1956,21 @@ function _toggleProvider(div) {{
 function _setModel(provKey, subKey) {{
   _settings.default_model = provKey;
   _settings.default_sub_model = subKey;
+  _modelDirty = true;
   _buildAiProviders();
   markDirty();
 }}
 function _connectProvider(provKey) {{
+  if (window.__connectPending) return;
+  window.__connectPending = true;
   fetch('/settings-connect/'+_sessionToken+'?provider='+provKey, {{method:'POST'}})
     .then(function(r) {{ return r.json(); }})
     .then(function(d) {{
       if (d.ok) alert((T('s_ai_connect_started')||'연결을 시작합니다. 텔레그램을 확인하세요.'));
       else alert(d.error || 'Error');
-    }});
+    }})
+    .catch(function() {{ alert('Error'); }})
+    .finally(function() {{ window.__connectPending = false; }});
 }}
 function markDirty() {{
   document.getElementById('save-status').style.display = 'none';
@@ -1968,26 +1979,29 @@ function markDirty() {{
 function gatherSettings() {{
   var s = {{}};
   document.querySelectorAll('.toggle input[data-key]').forEach(function(cb) {{
-    s[cb.dataset.key] = cb.checked;
+    _putIfChanged(s, cb.dataset.key, cb.checked);
   }});
-  s.token_display = document.getElementById('sel-token-display').value;
-  s.theme = document.getElementById('sel-theme').value;
+  _putIfChanged(s, 'token_display', document.getElementById('sel-token-display').value);
+  _putIfChanged(s, 'theme', document.getElementById('sel-theme').value);
   var snap = document.querySelector('input[data-key="snapshot_ttl_days"]');
-  s.snapshot_ttl_days = parseInt(snap.value) || 7;
+  _putIfChanged(s, 'snapshot_ttl_days', parseInt(snap.value) || 7);
   var ttlSel = document.getElementById('sel-token-ttl');
+  var tokenTtl = ttlSel.value;
   if (ttlSel.value === 'minutes') {{
-    s.token_ttl = parseInt(document.getElementById('ttl-minutes-input').value) || 30;
-  }} else {{
-    s.token_ttl = ttlSel.value;
+    tokenTtl = parseInt(document.getElementById('ttl-minutes-input').value) || 30;
   }}
-  s.default_model = _settings.default_model || 'claude';
-  s.default_sub_model = _settings.default_sub_model || 'sonnet';
+  _putIfChanged(s, 'token_ttl', tokenTtl);
+  if (_modelDirty) {{
+    _putIfChanged(s, 'default_model', _settings.default_model || 'claude');
+    _putIfChanged(s, 'default_sub_model', _settings.default_sub_model || 'sonnet');
+    s._model_dirty = true;
+  }}
   var bls = document.getElementById('sel-bot-lang');
-  if (bls) {{ s.bot_lang = bls.value; }}
+  if (bls) {{ _putIfChanged(s, 'bot_lang', bls.value); }}
   var wdi = document.getElementById('workdir-input');
-  if (wdi) {{ s.work_dir = wdi.value.trim(); }}
+  if (wdi) {{ _putIfChanged(s, 'work_dir', wdi.value.trim()); }}
   var sti = document.getElementById('stimeout-input');
-  if (sti) {{ s.settings_timeout_minutes = parseInt(sti.value) || 15; }}
+  if (sti) {{ _putIfChanged(s, 'settings_timeout_minutes', parseInt(sti.value) || 15); }}
   return s;
 }}
 function saveSettings() {{
@@ -2011,6 +2025,8 @@ function saveSettings() {{
           document.getElementById('save-status').style.display = '';
           btn.textContent = T('s_saved') || '✔ 저장됨';
           btn.disabled = true;
+          _initialSettings = JSON.parse(JSON.stringify(_settings));
+          _modelDirty = false;
           setTimeout(function() {{ window.close(); }}, 1500);
         }}
       }});
@@ -2495,23 +2511,32 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                         # Clear session so Claude starts fresh in the new work directory
                         update_config("session_id", None)
                         from state import state as _st2; _st2.session_id = None
+                # Apply default model only when user explicitly changed model in this page session.
+                model_dirty = bool(new_settings.pop("_model_dirty", False))
+                if not model_dirty:
+                    new_settings.pop("default_model", None)
+                    new_settings.pop("default_sub_model", None)
                 for k, v in new_settings.items():
                     settings[k] = v
                 update_config("settings", dict(settings))
                 # Apply default_model/sub_model to state
                 sub = new_settings.get("default_sub_model")
-                ai = new_settings.get("default_model", "claude")
+                ai = new_settings.get("default_model")
                 from state import state as _st, switch_provider
-                switch_provider(ai)
-                ai_info = AI_MODELS.get(ai)
-                if ai_info and sub:
-                    resolved = ai_info["sub_models"].get(sub)
-                    if resolved:
-                        _st.model = resolved
+                if ai:
+                    switch_provider(ai)
+                    ai_info = AI_MODELS.get(ai)
+                    if ai_info and sub:
+                        resolved = ai_info["sub_models"].get(sub)
+                        if resolved:
+                            _st.model = resolved
+                        else:
+                            _st.model = None  # use CLI default
                     else:
-                        _st.model = None  # use CLI default
-                else:
-                    _st.model = None
+                        _st.model = None
+                    _st._provider_models[_st.provider] = _st.model
+                    update_config("model", _st.model)
+                    update_config("provider_models", dict(_st._provider_models))
                 # Invalidate session (one-time use)
                 _ViewerHandler.settings_session_tokens.pop(session_token, None)
                 # Build and send change notification to Telegram
@@ -2595,6 +2620,10 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             import json as _json
             if not provider or provider not in AI_MODELS:
                 self._send_json({"ok": False, "error": "Unknown provider"})
+                return
+            from ai.connect import is_connect_active
+            if is_connect_active():
+                self._send_json({"ok": False, "error": "이미 다른 연결 작업이 진행 중입니다."})
                 return
             from telegram import send_html, CHAT_ID, tg_api as _tga
             import i18n as _i18n

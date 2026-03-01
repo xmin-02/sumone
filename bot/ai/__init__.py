@@ -40,6 +40,8 @@ class ParsedEvent:
     duration_ms: int = 0
     cost_usd: float = 0.0
     num_turns: int = 0
+    is_error: bool = False
+    errors: list = field(default_factory=list)
 
 
 @dataclass
@@ -193,13 +195,21 @@ class BaseRunner:
                     state.ai_proc = None
                 self._proc = None
 
+            unsent = self._final_text[self._sent_text_count:]
+            output = "\n\n".join(unsent).strip()
+
+            if self._should_retry_without_session(session_id, proc.returncode):
+                self._clear_stale_session(session_id)
+                log.warning(
+                    "Retrying [%s] without stale session_id: %s",
+                    self.PROVIDER, session_id,
+                )
+                return self.run(message, session_id=None)
+
             # File viewer link
             had_new_files = len(state.modified_files) > files_count_before
             if self.cb.on_file_link:
                 self.cb.on_file_link(had_new_files)
-
-            unsent = self._final_text[self._sent_text_count:]
-            output = "\n\n".join(unsent).strip()
 
             # Save session summary + token log
             # Prefer original session_id (context-injected resume) over CLI's new one
@@ -375,6 +385,28 @@ class BaseRunner:
             else:
                 label += f" {i18n.t('todo_count', count=len(todos))}"
         return label
+
+    def _should_retry_without_session(self, session_id, returncode):
+        """Retry once without resume if the saved native session no longer exists."""
+        if not session_id or self.RESUME_MODE != "session_id" or returncode == 0:
+            return False
+        if not self._result_event or not self._result_event.is_error:
+            return False
+        for err in self._result_event.errors:
+            if isinstance(err, str) and "No conversation found with session ID" in err:
+                return True
+        return False
+
+    def _clear_stale_session(self, session_id):
+        """Drop a dead persisted session id so future runs start cleanly."""
+        from config import update_config
+
+        if state._provider_sessions.get(self.PROVIDER) == session_id:
+            state._provider_sessions.pop(self.PROVIDER, None)
+        if state.provider == self.PROVIDER and state.session_id == session_id:
+            state.session_id = None
+            update_config("session_id", None)
+        update_config("provider_sessions", dict(state._provider_sessions))
 
     # --- Session context ---
 

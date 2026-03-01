@@ -45,7 +45,7 @@ AI_MODELS = {
         "label": "Claude",
         "cli_cmd": "claude",
         "install_cmd": ["npm", "install", "-g", "@anthropic-ai/claude-code"],
-        "auth_cmd": ["claude"],
+        "auth_cmd": ["claude", "auth", "login"],
         "default": "sonnet",
         "sub_models": {
             "haiku": "claude-haiku-4-5-20251001",

@@ -6,17 +6,23 @@ Handles interactive CLI auth (claude/codex/gemini) by:
 - Sending prompts to Telegram as inline keyboard or text request
 - Forwarding user responses back to the PTY stdin
 """
+import base64
 import json
 import os
 import re
 import pty
 import select
+import subprocess
 import termios
 import threading
 import time
+import hashlib
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from config import AI_MODELS, IS_WINDOWS, log
-from state import state
+from state import get_provider_env, set_provider_auth
 
 # Sent via Telegram
 from telegram import send_html, tg_api, CHAT_ID
@@ -26,7 +32,6 @@ _RE_URL = re.compile(r'https?://\S+', re.IGNORECASE)
 _RE_YN = re.compile(r'\(y(?:/n|es)?\)|y/n|yes/no', re.IGNORECASE)
 _RE_MENU_ITEM = re.compile(r'(?:^|\n)\s*(?:[❯>*]\s*|\d+[.)]\s*)(.+)', re.MULTILINE)
 _ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*[mABCDEFGHJKLMPSTfhilnpqrsu]|\x1b\[\?[0-9;]*[hl]|\x1b[=>]|\r')
-
 # State for active connection flow
 _connect_state = {
     "active": False,
@@ -36,6 +41,10 @@ _connect_state = {
     "waiting": None,          # "yn" | "menu" | "text" | None
     "menu_items": [],
     "msg_id": None,           # last bot message id
+    "url_prompt_sent": False, # avoid duplicate OAuth prompt messages
+    "last_user_input": "",    # used to mask echoed auth code from PTY output
+    "oauth_code_verifier": "",
+    "oauth_state": "",
 }
 _connect_lock = threading.Lock()
 
@@ -43,6 +52,134 @@ _connect_lock = threading.Lock()
 def _strip_ansi(text):
     return _ANSI_ESCAPE.sub('', text)
 
+
+def _sanitize_cli_output(text):
+    """Mask sensitive user-entered input that may be echoed by the CLI."""
+    clean = _strip_ansi(text)
+    with _connect_lock:
+        secret = (_connect_state.get("last_user_input") or "").strip()
+    # Only mask long values (e.g., OAuth auth codes), not short menu inputs like "1" or "y".
+    if len(secret) >= 8:
+        clean = clean.replace(secret, "[입력값 숨김]")
+    return clean
+
+
+def _build_auth_env(provider):
+    """Return environment with provider-specific auth variables applied."""
+    env = dict(os.environ)
+    env.update(get_provider_env(provider))
+    return env
+
+def _looks_like_auth_payload(text):
+    """Heuristic for pasted auth payloads when the CLI is not requesting input."""
+    value = (text or "").strip()
+    if len(value) < 24:
+        return False
+    if "#" in value:
+        return True
+    return bool(re.fullmatch(r'[A-Za-z0-9/_=-]{24,}', value))
+
+
+def _parse_claude_auth_payload(text):
+    """Parse a Claude browser auth payload into code/state parts."""
+    value = (text or "").strip()
+    if "#" not in value:
+        return None, None
+    code, state = value.split("#", 1)
+    code = code.strip()
+    state = state.strip()
+    if not code or not state:
+        return None, None
+    return code, state
+
+
+def _b64url(data):
+    """Return unpadded base64url bytes."""
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _make_claude_code_verifier():
+    """Generate a PKCE verifier compatible with Claude's manual OAuth flow."""
+    return _b64url(os.urandom(32))
+
+
+def _make_claude_manual_auth_url():
+    """Build Claude's manual OAuth URL and return (url, verifier, state)."""
+    verifier = _make_claude_code_verifier()
+    challenge = _b64url(hashlib.sha256(verifier.encode("utf-8")).digest())
+    state = _b64url(os.urandom(32))
+    params = {
+        "code": "true",
+        "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        "response_type": "code",
+        "redirect_uri": "https://platform.claude.com/oauth/code/callback",
+        "scope": (
+            "org:create_api_key "
+            "user:profile "
+            "user:inference "
+            "user:sessions:claude_code "
+            "user:mcp_servers"
+        ),
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "state": state,
+    }
+    url = "https://claude.ai/oauth/authorize?" + urllib.parse.urlencode(params)
+    return url, verifier, state
+
+
+def _exchange_claude_manual_code(raw_text, expected_state, code_verifier):
+    """Exchange a Claude manual auth code for OAuth tokens."""
+    code, state = _parse_claude_auth_payload(raw_text)
+    if not code or not state:
+        raise RuntimeError("인증 문자열 형식이 올바르지 않습니다.")
+    if expected_state and state != expected_state:
+        raise RuntimeError("인증 문자열의 state 값이 현재 세션과 일치하지 않습니다.")
+    payload = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": "https://platform.claude.com/oauth/code/callback",
+        "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        "code_verifier": code_verifier,
+        "state": state,
+    }
+    req = urllib.request.Request(
+        "https://platform.claude.com/v1/oauth/token",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "claude-telegram-bot/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            data = json.loads(body or "{}")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        detail = body[-300:] if body else str(e)
+        raise RuntimeError(f"토큰 교환 실패 (HTTP {e.code}): {detail}") from e
+    except Exception as e:
+        raise RuntimeError(f"토큰 교환 실패: {e}") from e
+
+    access_token = (data or {}).get("access_token")
+    refresh_token = (data or {}).get("refresh_token")
+    if not access_token or not refresh_token:
+        raise RuntimeError("토큰 교환 응답에 access_token 또는 refresh_token 이 없습니다.")
+    account = (data or {}).get("account") or {}
+    organization = (data or {}).get("organization") or {}
+    auth = {
+        "oauth_token": access_token,
+        "oauth_refresh_token": refresh_token,
+    }
+    if account.get("uuid"):
+        auth["account_uuid"] = account["uuid"]
+    if account.get("email_address"):
+        auth["user_email"] = account["email_address"]
+    if organization.get("uuid"):
+        auth["organization_uuid"] = organization["uuid"]
+    return auth
 
 def _detect_prompt(text):
     """Detect what kind of prompt the CLI is showing."""
@@ -89,10 +226,15 @@ def _send_prompt_to_telegram(provider, prompt_type, data, raw_text):
         code_line = f"\n\n🔑 인증 코드: <code>{code_match.group(1)}</code>" if code_match else ""
         # Check if auth code input is needed (Gemini)
         needs_code = "authorization code" in clean.lower()
-        if needs_code:
+        if provider == "claude":
+            footer = (
+                "\n\n이 단계는 브라우저 로그인 단계입니다."
+                "\n잠시 후 코드 입력 안내가 오면, 브라우저에서 받은 전체 값을 텔레그램에 입력해주세요."
+            )
+        elif needs_code:
             footer = "\n\n로그인 후 표시되는 인증 코드를 여기에 입력해주세요."
         else:
-            footer = "\n\n인증 완료 후 자동으로 연결됩니다."
+            footer = "\n\n추가로 코드 입력 안내가 오지 않으면, 텔레그램에 별도 입력은 필요 없습니다."
         buttons = [[{"text": "🔗 인증하기", "url": url}]]
         result = tg_api("sendMessage", {
             "chat_id": CHAT_ID,
@@ -146,16 +288,21 @@ def _check_auth(provider, cli_cmd):
     resolved = shutil.which(cli_cmd)
     if not resolved:
         return False
+    env = _build_auth_env(provider)
     if provider == "codex":
         try:
-            r = subprocess.run([resolved, "login", "status"], capture_output=True, timeout=5)
+            r = subprocess.run([resolved, "login", "status"], capture_output=True, timeout=5, env=env)
             return r.returncode == 0
         except Exception:
             return False
     elif provider == "gemini":
         return os.path.isfile(os.path.expanduser("~/.gemini/oauth_creds.json"))
     else:  # claude
-        return True
+        try:
+            r = subprocess.run([resolved, "auth", "status"], capture_output=True, timeout=5, env=env)
+            return r.returncode == 0
+        except Exception:
+            return False
 
 
 def _is_cli_installed(cli_cmd):
@@ -213,6 +360,31 @@ def _install_cli(provider, info):
         return False
 
 
+def _ensure_gemini_oauth_mode():
+    """Ensure Gemini CLI uses oauth-personal auth for connect flow."""
+    gemini_dir = os.path.expanduser("~/.gemini")
+    settings_path = os.path.join(gemini_dir, "settings.json")
+    os.makedirs(gemini_dir, exist_ok=True)
+
+    data = {}
+    if os.path.isfile(settings_path):
+        try:
+            with open(settings_path, encoding="utf-8") as f:
+                data = json.load(f) or {}
+        except Exception:
+            data = {}
+
+    security = data.get("security") if isinstance(data.get("security"), dict) else {}
+    auth = security.get("auth") if isinstance(security.get("auth"), dict) else {}
+    auth["selectedType"] = "oauth-personal"
+    security["auth"] = auth
+    data["security"] = security
+
+    with open(settings_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    log.info("Gemini auth mode set to oauth-personal: %s", settings_path)
+
+
 def run_connect_flow(provider):
     """Run CLI install (if needed) + auth flow for the given provider."""
     global _connect_state
@@ -225,10 +397,6 @@ def run_connect_flow(provider):
     cli_cmd = info.get("cli_cmd", provider)
     prov_label = info.get("label", provider.title())
 
-    if IS_WINDOWS:
-        send_html(f"❌ Windows에서는 PTY 연결이 지원되지 않습니다.")
-        return
-
     # Step 1: Install if not available
     if not _is_cli_installed(cli_cmd):
         if not _install_cli(provider, info):
@@ -240,6 +408,12 @@ def run_connect_flow(provider):
 
     # Step 2: Clear existing auth for re-authentication
     if provider == "gemini":
+        try:
+            _ensure_gemini_oauth_mode()
+        except Exception as e:
+            log.error("Failed to prepare Gemini auth mode: %s", e)
+            send_html(f"❌ <b>{prov_label}</b> 설정 준비 실패: <code>{e}</code>")
+            return
         for f in ["oauth_creds.json", "google_accounts.json"]:
             p = os.path.expanduser(f"~/.gemini/{f}")
             if os.path.isfile(p):
@@ -249,6 +423,40 @@ def run_connect_flow(provider):
     # Step 3: Auth flow
     auth_args = info.get("auth_cmd", [cli_cmd, "auth", "login"])
     log.info("Starting connect flow for %s: %s", provider, auth_args)
+
+    if provider == "claude":
+        url, verifier, oauth_state = _make_claude_manual_auth_url()
+        with _connect_lock:
+            _connect_state.update({
+                "active": True,
+                "provider": provider,
+                "fd": None,
+                "pid": None,
+                "waiting": None,
+                "menu_items": [],
+                "msg_id": None,
+                "url_prompt_sent": True,
+                "last_user_input": "",
+                "oauth_code_verifier": verifier,
+                "oauth_state": oauth_state,
+            })
+        send_html(f"🔌 <b>{prov_label}</b> 연결 중...")
+        msg_id = _send_prompt_to_telegram(provider, "url", [url], url)
+        with _connect_lock:
+            _connect_state["msg_id"] = msg_id
+        prompt_msg_id = _send_prompt_to_telegram(
+            provider,
+            "text",
+            ["Paste code here if prompted > "],
+            "Paste code here if prompted > ",
+        )
+        with _connect_lock:
+            _connect_state["msg_id"] = prompt_msg_id
+        return
+
+    if IS_WINDOWS:
+        send_html(f"❌ Windows에서는 PTY 연결이 지원되지 않습니다.")
+        return
 
     import shutil
     resolved_cmd = shutil.which(auth_args[0]) or auth_args[0]
@@ -288,13 +496,19 @@ def run_connect_flow(provider):
             "waiting": None,
             "menu_items": [],
             "msg_id": None,
+            "url_prompt_sent": False,
+            "last_user_input": "",
+            "oauth_code_verifier": "",
+            "oauth_state": "",
         })
 
     send_html(f"🔌 <b>{prov_label}</b> 연결 중...")
 
     buf = ""
     last_output_time = time.time()
+    url_prompt_time = None
     IDLE_TIMEOUT = 3.0  # seconds of no output before treating as prompt
+    URL_WAIT_TIMEOUT = 300.0
 
     try:
         while True:
@@ -315,6 +529,13 @@ def run_connect_flow(provider):
                 if buf and (time.time() - last_output_time) >= IDLE_TIMEOUT:
                     prompt_type, prompt_data = _detect_prompt(buf)
                     if prompt_type:
+                        if prompt_type == "url":
+                            with _connect_lock:
+                                if _connect_state.get("url_prompt_sent"):
+                                    # Gemini can redraw URL blocks; ignore repeated URL prompts.
+                                    buf = ""
+                                    continue
+                                _connect_state["url_prompt_sent"] = True
                         # Gemini requires auth code input after URL
                         needs_input = (prompt_type == "url" and "authorization code" in _strip_ansi(buf).lower())
                         with _connect_lock:
@@ -325,21 +546,21 @@ def run_connect_flow(provider):
                         msg_id = _send_prompt_to_telegram(provider, prompt_type, prompt_data, buf)
                         with _connect_lock:
                             _connect_state["msg_id"] = msg_id
-                        buf = ""
                         if prompt_type == "url" and not needs_input:
-                            # Wait for process to complete after URL auth (e.g. Codex)
-                            _wait_for_completion(pid, fd, provider, prov_label)
-                            return
-                        # Wait for user response (handled by handle_connect_response)
-                        _wait_for_user_input(fd, provider)
+                            url_prompt_time = time.time()
                         buf = ""
                         if needs_input:
+                            # Wait for user response (handled by handle_connect_response)
+                            _wait_for_user_input(fd, provider)
+                            buf = ""
+                            if not is_connect_active():
+                                return
                             # Auth code entered, now wait for process to finish
                             _wait_for_completion(pid, fd, provider, prov_label)
                             return
                     else:
                         # Non-prompt output — show progress
-                        clean = _strip_ansi(buf).strip()
+                        clean = _sanitize_cli_output(buf).strip()
                         if clean and len(clean) > 5:
                             send_html(f"<code>{clean[-500:]}</code>")
                         buf = ""
@@ -352,6 +573,11 @@ def run_connect_flow(provider):
             except ChildProcessError:
                 break
 
+            if url_prompt_time and (time.time() - url_prompt_time) >= URL_WAIT_TIMEOUT:
+                hint = f"⏰ <b>{prov_label}</b> 인증 대기 시간이 초과되었습니다. 다시 시도해주세요."
+                _cancel_connect_flow(hint)
+                return
+
     except Exception as e:
         log.error("Connect flow error: %s", e)
     finally:
@@ -363,9 +589,12 @@ def run_connect_flow(provider):
             _connect_state["active"] = False
             _connect_state["fd"] = None
             _connect_state["pid"] = None
+            _connect_state["last_user_input"] = ""
+            _connect_state["oauth_code_verifier"] = ""
+            _connect_state["oauth_state"] = ""
 
     # Check exit
-    clean_buf = _strip_ansi(buf).strip()
+    clean_buf = _sanitize_cli_output(buf).strip()
     if clean_buf:
         send_html(f"<code>{clean_buf[-300:]}</code>")
 
@@ -377,6 +606,18 @@ def run_connect_flow(provider):
     if authenticated:
         send_html(f"✅ <b>{prov_label}</b> 연결 완료!")
     else:
+        lower_buf = clean_buf.lower()
+        if provider == "gemini" and (
+            "interactive consent could not be obtained" in lower_buf
+            or "please set an auth method" in lower_buf
+            or "authorization code" in lower_buf
+        ):
+            send_html(
+                "❌ <b>Gemini</b> 연결 실패.\n"
+                "브라우저 인증 후 받은 코드를 텔레그램에 그대로 입력해주세요.\n"
+                "필요하면 <b>연결하기</b>를 다시 눌러 재시도하세요."
+            )
+            return
         send_html(f"❌ <b>{prov_label}</b> 연결 실패. 다시 시도해주세요.")
 
 
@@ -395,13 +636,15 @@ def _wait_for_completion(pid, fd, provider, prov_label):
         try:
             ready, _, _ = select.select([fd], [], [], 1.0)
             if ready:
-                os.read(fd, 4096)  # drain output
+                os.read(fd, 4096)
         except OSError:
             break
         time.sleep(0.5)
 
     with _connect_lock:
         _connect_state["active"] = False
+        _connect_state["oauth_code_verifier"] = ""
+        _connect_state["oauth_state"] = ""
 
     from state import state as _st
     cli_cmd = AI_MODELS.get(provider, {}).get("cli_cmd", provider)
@@ -414,8 +657,46 @@ def _wait_for_completion(pid, fd, provider, prov_label):
         send_html(f"⏳ 인증을 완료했다면 <b>/restart_bot</b> 으로 재시작해주세요.")
 
 
+def _cancel_connect_flow(message):
+    """Abort the active connect flow and notify the user."""
+    pid = None
+    fd = None
+    with _connect_lock:
+        pid = _connect_state.get("pid")
+        fd = _connect_state.get("fd")
+        _connect_state["active"] = False
+        _connect_state["waiting"] = None
+        _connect_state["_pending_response"] = None
+        _connect_state["oauth_code_verifier"] = ""
+        _connect_state["oauth_state"] = ""
+    try:
+        if pid:
+            os.kill(pid, 15)
+    except OSError:
+        pass
+    try:
+        if fd is not None:
+            os.close(fd)
+    except OSError:
+        pass
+    send_html(message)
+
+
 def _wait_for_user_input(fd, provider):
     """Block until user sends a response via Telegram (handle_connect_response sets it)."""
+    with _connect_lock:
+        response = (_connect_state.get("_pending_response") or "").strip()
+        if response:
+            _connect_state["_pending_response"] = None
+            _connect_state["last_user_input"] = response
+    if response:
+        try:
+            os.write(fd, (response + "\n").encode("utf-8"))
+            log.info("Wrote to PTY: %r", "[입력값 숨김]" if len(response) >= 8 else response)
+        except OSError as e:
+            log.error("PTY write error: %s", e)
+        return
+
     _user_response_event.clear()
     timeout = 120
     if not _user_response_event.wait(timeout=timeout):
@@ -427,6 +708,7 @@ def _wait_for_user_input(fd, provider):
     with _connect_lock:
         response = _connect_state.get("_pending_response", "")
         _connect_state["_pending_response"] = None
+        _connect_state["last_user_input"] = (response or "").strip()
 
     if response is None:
         return
@@ -444,6 +726,50 @@ _user_response_event = threading.Event()
 
 def handle_connect_response(text):
     """Called from main polling loop when user sends a message during connect flow."""
+    with _connect_lock:
+        if not _connect_state["active"]:
+            return False
+        provider = _connect_state.get("provider")
+        waiting = _connect_state.get("waiting")
+
+    if not waiting:
+        if provider == "claude" and _looks_like_auth_payload(text):
+            with _connect_lock:
+                url_prompt_sent = bool(_connect_state.get("url_prompt_sent"))
+                code_verifier = (_connect_state.get("oauth_code_verifier") or "").strip()
+                expected_state = (_connect_state.get("oauth_state") or "").strip()
+                if not _connect_state["active"]:
+                    return False
+            if not url_prompt_sent:
+                send_html(
+                    "ℹ️ <b>Claude</b> 인증 URL이 아직 표시되기 전입니다.\n"
+                    "브라우저 로그인 안내가 나온 뒤에 인증 문자열을 보내주세요."
+                )
+                return True
+            if code_verifier:
+                try:
+                    auth = _exchange_claude_manual_code(text.strip(), expected_state, code_verifier)
+                    set_provider_auth("claude", auth)
+                    from state import state as _st
+                    _st.cli_status["claude"] = _check_auth("claude", AI_MODELS.get("claude", {}).get("cli_cmd", "claude"))
+                except Exception as e:
+                    send_html(
+                        "❌ <b>Claude</b> 토큰 교환에 실패했습니다.\n"
+                        f"<code>{_strip_ansi(str(e))[-300:]}</code>"
+                    )
+                    return True
+                with _connect_lock:
+                    _connect_state["active"] = False
+                    _connect_state["waiting"] = None
+                    _connect_state["last_user_input"] = ""
+                    _connect_state["url_prompt_sent"] = False
+                    _connect_state["oauth_code_verifier"] = ""
+                    _connect_state["oauth_state"] = ""
+                send_html("✅ <b>Claude</b> 연결 완료!")
+                return True
+            return True
+        return False
+
     with _connect_lock:
         if not _connect_state["active"]:
             return False
