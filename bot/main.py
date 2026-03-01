@@ -802,13 +802,25 @@ def _apply_default_model():
 
 
 def _migrate_old_layout():
-    """Migrate data from old ~/.claude-telegram-bot/ and ~/.sumone/ to DDD layout."""
+    """Migrate data and code from old location to DDD layout.
+
+    Handles the full migration path so that a single /update_bot is enough:
+    1. Migrate data (sessions, downloads, etc.) to ~/.sumone/data/
+    2. Copy bot code to ~/.sumone/bot/ if running from old location
+    3. Update autostart configs (launchd, systemd, Task Scheduler)
+    4. Re-exec from ~/.sumone/bot/main.py
+    """
     import shutil
     old_bot = os.path.expanduser("~/.claude-telegram-bot")
-    root = config.ROOT_DIR
-    data_dir = config.DATA_DIR
-    bin_dir = config.BIN_DIR
-    log_dir = config.LOG_DIR
+    root = config.ROOT_DIR            # ~/.sumone
+    data_dir = config.DATA_DIR        # ~/.sumone/data
+    bin_dir = config.BIN_DIR          # ~/.sumone/bin
+    log_dir = config.LOG_DIR          # ~/.sumone/logs
+    new_bot_dir = os.path.join(root, "bot")   # ~/.sumone/bot
+
+    # Detect if running from old location (not under ~/.sumone/)
+    cur_bot = os.path.abspath(config.BOT_DIR)
+    running_from_old = not cur_bot.startswith(os.path.abspath(root) + os.sep)
 
     migrated = []
 
@@ -871,7 +883,10 @@ def _migrate_old_layout():
             new_cf = os.path.join(bin_dir, cf_name)
             if os.path.isfile(old_cf) and not os.path.isfile(new_cf):
                 shutil.copy2(old_cf, new_cf)
-                os.chmod(new_cf, 0o755)
+                try:
+                    os.chmod(new_cf, 0o755)
+                except OSError:
+                    pass
                 migrated.append(cf_name)
 
         # logs
@@ -881,14 +896,53 @@ def _migrate_old_layout():
             if os.path.isfile(old_lf) and not os.path.isfile(new_lf):
                 shutil.copy2(old_lf, new_lf)
 
-    # --- Update launchd plist (macOS) ---
-    _update_launchd_plist()
+    # --- Copy bot code to new location if running from old dir ---
+    if running_from_old:
+        # Orphan files from pre-DDD structure (should not be copied)
+        _orphans = {
+            "basic.py", "filesystem.py", "session_cmd.py",
+            "settings.py", "update.py", "total_tokens.py", "skills.py",
+        }
+        os.makedirs(new_bot_dir, exist_ok=True)
+        for dirpath, dirnames, filenames in os.walk(cur_bot):
+            # Skip __pycache__
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+            rel = os.path.relpath(dirpath, cur_bot)
+            dst_dir = os.path.join(new_bot_dir, rel) if rel != "." else new_bot_dir
+            os.makedirs(dst_dir, exist_ok=True)
+            for fname in filenames:
+                if not fname.endswith((".py", ".json")):
+                    continue
+                # Skip orphan command files at commands/ root
+                if rel == "commands" and fname in _orphans:
+                    continue
+                # Skip old single-file claude.py at bot root (replaced by ai/)
+                if rel == "." and fname == "claude.py" and os.path.isdir(
+                        os.path.join(cur_bot, "ai")):
+                    continue
+                src = os.path.join(dirpath, fname)
+                dst = os.path.join(dst_dir, fname)
+                shutil.copy2(src, dst)
+        migrated.append("bot code → ~/.sumone/bot/")
+        config.log.info("Bot code copied to %s", new_bot_dir)
+
+    # --- Update autostart configs (always target ~/.sumone/bot/) ---
+    _update_launchd_plist(new_bot_dir)
+    _update_windows_task(new_bot_dir)
+    _update_systemd_service(new_bot_dir)
 
     if migrated:
         config.log.info("Migration complete: %s", ", ".join(migrated))
 
+    # --- Re-exec from new location ---
+    if running_from_old:
+        new_main = os.path.join(new_bot_dir, "main.py")
+        if os.path.isfile(new_main):
+            config.log.info("Re-executing from new location: %s", new_main)
+            os.execv(sys.executable, [sys.executable, new_main])
 
-def _update_launchd_plist():
+
+def _update_launchd_plist(target_bot_dir):
     """Update macOS launchd plist to point to new paths."""
     if config.IS_WINDOWS:
         return
@@ -896,7 +950,7 @@ def _update_launchd_plist():
     if platform.system() != "Darwin":
         return
 
-    bot_main = os.path.join(config.BOT_DIR, "main.py")
+    bot_main = os.path.join(target_bot_dir, "main.py")
     log_dir = config.LOG_DIR
     plist_dir = os.path.expanduser("~/Library/LaunchAgents")
 
@@ -932,7 +986,6 @@ def _update_launchd_plist():
             new_path = os.path.join(plist_dir, "com.sumone.telegram-bot.plist")
             with open(new_path, "w", encoding="utf-8") as f:
                 f.write(new_plist)
-            # Remove old plist if renamed
             if name != "com.sumone.telegram-bot.plist":
                 try:
                     os.remove(plist_path)
@@ -941,6 +994,75 @@ def _update_launchd_plist():
             config.log.info("launchd plist updated: %s", new_path)
         except Exception as e:
             config.log.warning("Failed to update launchd plist: %s", e)
+
+
+def _update_windows_task(target_bot_dir):
+    """Update Windows Task Scheduler to point to new bot path."""
+    if not config.IS_WINDOWS:
+        return
+    import subprocess as _sp
+    bot_main = os.path.join(target_bot_dir, "main.py")
+    task_name = "ClaudeTelegramBot"
+    try:
+        # Check if task exists
+        result = _sp.run(
+            ["schtasks", "/Query", "/TN", task_name],
+            capture_output=True, text=True,
+            creationflags=_sp.CREATE_NO_WINDOW,
+        )
+        if result.returncode != 0:
+            return  # task doesn't exist
+        # Update the task action to point to new path
+        python_path = sys.executable
+        _sp.run(
+            ["schtasks", "/Change", "/TN", task_name,
+             "/TR", f'"{python_path}" "{bot_main}"'],
+            capture_output=True, text=True,
+            creationflags=_sp.CREATE_NO_WINDOW,
+        )
+        config.log.info("Windows Task Scheduler updated: %s", task_name)
+    except Exception as e:
+        config.log.warning("Failed to update Windows task: %s", e)
+
+
+def _update_systemd_service(target_bot_dir):
+    """Update Linux systemd service to point to new bot path."""
+    if config.IS_WINDOWS:
+        return
+    import platform
+    if platform.system() != "Linux":
+        return
+    bot_main = os.path.join(target_bot_dir, "main.py")
+    svc_path = os.path.expanduser("~/.config/systemd/user/claude-telegram.service")
+    if not os.path.isfile(svc_path):
+        return
+    try:
+        with open(svc_path, encoding="utf-8") as f:
+            content = f.read()
+        if bot_main in content:
+            return  # already up to date
+        python_path = sys.executable
+        new_svc = (
+            "[Unit]\n"
+            "Description=sumone Telegram Bot\n\n"
+            "[Service]\n"
+            f"ExecStart={python_path} {bot_main}\n"
+            "Restart=always\n"
+            "RestartSec=5\n"
+            f"Environment=HOME={os.path.expanduser('~')}\n\n"
+            "[Install]\n"
+            "WantedBy=default.target\n"
+        )
+        with open(svc_path, "w", encoding="utf-8") as f:
+            f.write(new_svc)
+        import subprocess
+        subprocess.run(
+            ["systemctl", "--user", "daemon-reload"],
+            capture_output=True, timeout=10,
+        )
+        config.log.info("systemd service updated: %s", svc_path)
+    except Exception as e:
+        config.log.warning("Failed to update systemd service: %s", e)
 
 
 def main():
