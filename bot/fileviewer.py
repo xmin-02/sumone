@@ -2406,7 +2406,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(data)
-            except Exception:
+            except Exception as e:
+                log.warning("File read error (%s): %s", real, e)
                 self._send_error(500, "Read error")
             return
 
@@ -2429,7 +2430,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
-            except Exception:
+            except Exception as e:
+                log.warning("File viewer read error: %s", e)
                 self._send_error(500, "Read error")
             return
 
@@ -2451,7 +2453,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
-            except Exception:
+            except Exception as e:
+                log.warning("File viewer read error: %s", e)
                 self._send_error(500, "Read error")
             return
 
@@ -2475,7 +2478,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(data)
-            except Exception:
+            except Exception as e:
+                log.warning("File viewer read error: %s", e)
                 self._send_error(500, "Read error")
             return
 
