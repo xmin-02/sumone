@@ -403,19 +403,8 @@ def _is_authenticated(provider_key):
         return False
 
     elif provider_key == "gemini":
-        # Check credential file (same as main.py)
-        if os.path.isfile(os.path.expanduser("~/.gemini/oauth_creds.json")):
-            return True
-        if resolved:
-            try:
-                r = subprocess.run(
-                    [resolved, "--version"],
-                    capture_output=True, timeout=5,
-                )
-                return r.returncode == 0
-            except Exception:
-                pass
-        return False
+        # Check credential file only (--version doesn't indicate auth)
+        return os.path.isfile(os.path.expanduser("~/.gemini/oauth_creds.json"))
 
     return False
 
