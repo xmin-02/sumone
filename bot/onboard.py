@@ -477,6 +477,30 @@ def _try_install(provider_key, lang):
     return False
 
 
+def _ensure_gemini_oauth_mode():
+    """Set Gemini CLI to oauth-personal auth mode before first auth."""
+    gemini_dir = os.path.expanduser("~/.gemini")
+    settings_path = os.path.join(gemini_dir, "settings.json")
+    os.makedirs(gemini_dir, exist_ok=True)
+
+    data = {}
+    if os.path.isfile(settings_path):
+        try:
+            with open(settings_path, encoding="utf-8") as f:
+                data = json.load(f) or {}
+        except Exception:
+            data = {}
+
+    security = data.get("security") if isinstance(data.get("security"), dict) else {}
+    auth = security.get("auth") if isinstance(security.get("auth"), dict) else {}
+    auth["selectedType"] = "oauth-personal"
+    security["auth"] = auth
+    data["security"] = security
+
+    with open(settings_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 def _try_auth(provider_key, lang):
     """Run authentication command interactively.
     Returns True if exit code 0.
@@ -485,9 +509,18 @@ def _try_auth(provider_key, lang):
     name = info["label"]
     cmd = info["auth_cmd"]
 
+    # Gemini: set oauth mode + prevent auto-browser
+    env = None
+    if provider_key == "gemini":
+        try:
+            _ensure_gemini_oauth_mode()
+        except Exception:
+            pass
+        env = {**os.environ, "BROWSER": "echo", "NO_BROWSER": "true", "DISPLAY": ""}
+
     print(f"\n{_t(lang, 'auth_start').format(name=name)}\n")
     try:
-        result = subprocess.run(cmd, timeout=300)
+        result = subprocess.run(cmd, timeout=300, env=env)
         if result.returncode == 0:
             print(f"\n{_t(lang, 'auth_ok').format(name=name)}")
             return True
