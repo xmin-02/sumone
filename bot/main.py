@@ -484,6 +484,11 @@ def _kill_duplicate_bots():
     """Find and kill other bot processes (same script), return count killed."""
     import subprocess as _sp
     my_pid = os.getpid()
+    skip_pids = {my_pid}
+    try:
+        skip_pids.add(os.getppid())
+    except (AttributeError, OSError):
+        pass
     killed = 0
     bot_scripts = {"main.py", "telegram-bot-ko.py", "telegram-bot-en.py", "telegram-bot.py"}
     try:
@@ -508,7 +513,7 @@ def _kill_duplicate_bots():
                     pid = int(pid_str.strip())
                 except ValueError:
                     continue
-                if pid == my_pid:
+                if pid in skip_pids:
                     continue
                 if any(s in cmdline for s in bot_scripts):
                     try:
@@ -534,7 +539,7 @@ def _kill_duplicate_bots():
                 except ValueError:
                     continue
                 cmdline = tok[1]
-                if pid == my_pid:
+                if pid in skip_pids:
                     continue
                 if "python" in cmdline.lower() and any(s in cmdline for s in bot_scripts):
                     try:

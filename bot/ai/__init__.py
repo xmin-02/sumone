@@ -270,6 +270,17 @@ class BaseRunner:
             )
             if os.path.isdir(py_scripts):
                 env["PATH"] = py_scripts + ";" + env.get("PATH", "")
+            # Auto-detect git-bash for Claude Code on Windows
+            if "CLAUDE_CODE_GIT_BASH_PATH" not in env:
+                for candidate in [
+                    r"C:\Program Files\Git\bin\bash.exe",
+                    r"D:\Git\bin\bash.exe",
+                    r"C:\Git\bin\bash.exe",
+                    os.path.join(env.get("ProgramFiles", ""), "Git", "bin", "bash.exe"),
+                ]:
+                    if os.path.isfile(candidate):
+                        env["CLAUDE_CODE_GIT_BASH_PATH"] = candidate
+                        break
         else:
             env["HOME"] = os.path.expanduser("~")
             extra = ":".join(p for p in [

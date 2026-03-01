@@ -93,6 +93,7 @@ download_bot() {
         "bot/sessions.py:bot/sessions.py"
         "bot/downloader.py:bot/downloader.py"
         "bot/fileviewer.py:bot/fileviewer.py"
+        "bot/tunnel.py:bot/tunnel.py"
         "bot/onboard.py:bot/onboard.py"
         "bot/ai/__init__.py:bot/ai/__init__.py"
         "bot/ai/claude.py:bot/ai/claude.py"
