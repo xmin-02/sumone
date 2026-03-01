@@ -210,7 +210,7 @@ def _aggregate_files(entries):
     Hides rollback-backup entries from the UI (internal backups)."""
     file_map = defaultdict(list)
     for entry in entries:
-        file_map[entry["path"]].append(entry)
+        file_map[os.path.normpath(entry["path"])].append(entry)
     result = []
     for path, hist in file_map.items():
         # Filter out rollback-backup entries (internal, noisy in UI)
@@ -1566,7 +1566,8 @@ def _page_snapshot(snapshot_name, session_token):
     if not os.path.isfile(snapshot_path):
         return None
     real = os.path.realpath(snapshot_path)
-    if not real.startswith(os.path.realpath(_SNAPSHOTS_DIR)):
+    snap_dir_real = os.path.realpath(_SNAPSHOTS_DIR)
+    if not real.startswith(snap_dir_real + os.sep) and real != snap_dir_real:
         return None
 
     fname = snapshot_name
@@ -2071,7 +2072,8 @@ def _do_rollback_file(snapshot_name):
     if not os.path.isfile(snap_path):
         return False, "Snapshot not found"
     real = os.path.realpath(snap_path)
-    if not real.startswith(os.path.realpath(_SNAPSHOTS_DIR)):
+    snap_dir_real = os.path.realpath(_SNAPSHOTS_DIR)
+    if not real.startswith(snap_dir_real + os.sep) and real != snap_dir_real:
         return False, "Invalid snapshot"
 
     original_path = find_path_for_snapshot(snapshot_name)
@@ -2260,7 +2262,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             return None
         snapshot_path = os.path.join(_SNAPSHOTS_DIR, snapshot_name)
         real = os.path.realpath(snapshot_path)
-        if not real.startswith(os.path.realpath(_SNAPSHOTS_DIR)):
+        snap_dir_real = os.path.realpath(_SNAPSHOTS_DIR)
+        if not real.startswith(snap_dir_real + os.sep) and real != snap_dir_real:
             return None
         if not os.path.isfile(real):
             return None

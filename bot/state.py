@@ -156,6 +156,7 @@ def cleanup_old_snapshots():
 
 def add_modified_file(path, content=None, op="write"):
     """Add a file modification entry with optional snapshot. op: 'write', 'edit', 'delete', 'rollback'."""
+    path = os.path.normpath(path)
     cleanup_old_snapshots()
     os.makedirs(_SNAPSHOTS_DIR, exist_ok=True)
     now = datetime.now()
