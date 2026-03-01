@@ -139,7 +139,7 @@ def _run_message(text):
             dots = ["\u00b7", "\u00b7\u00b7", "\u00b7\u00b7\u00b7"]
             idx = 0
             while not typing_stop.is_set():
-                typing_stop.wait(0.1)
+                typing_stop.wait(3)
                 if typing_stop.is_set():
                     break
                 idx = (idx + 1) % len(dots)
@@ -197,6 +197,7 @@ def _run_message(text):
                 return
 
             if not output:
+                send_html(f"<i>{i18n.t('error.empty_response')}</i>")
                 return
 
             header = provider_label

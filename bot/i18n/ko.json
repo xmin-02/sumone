@@ -22,7 +22,8 @@
     "self_token": "현재 봇의 토큰은 연결할 수 없습니다.",
     "already_connected": "이미 연결된 봇입니다: @{name}",
     "unknown_model": "알 수 없는 모델: {name}\n사용 가능: {aliases}",
-    "provider_disabled": "{name} 은(는) 활성화되지 않은 제공자입니다.\n/settings 에서 AI 제공자를 변경하세요."
+    "provider_disabled": "{name} 은(는) 활성화되지 않은 제공자입니다.\n/settings 에서 AI 제공자를 변경하세요.",
+    "empty_response": "AI가 빈 응답을 반환했습니다. 다시 시도해주세요."
   },
   "session": {
     "none": "세션이 없습니다.",

@@ -22,7 +22,8 @@
     "self_token": "Cannot connect the current bot's own token.",
     "already_connected": "Already connected: @{name}",
     "unknown_model": "Unknown model: {name}\nAvailable: {aliases}",
-    "provider_disabled": "{name} is not enabled.\nChange AI providers in /settings."
+    "provider_disabled": "{name} is not enabled.\nChange AI providers in /settings.",
+    "empty_response": "AI returned an empty response. Please try again."
   },
   "session": {
     "none": "No sessions found.",
