@@ -284,14 +284,6 @@ def get_provider_env(provider):
             "api_key": "ANTHROPIC_API_KEY",
             "auth_token": "ANTHROPIC_AUTH_TOKEN",
         },
-        "codex": {
-            "api_key": "OPENAI_API_KEY",
-            "org_id": "OPENAI_ORG_ID",
-        },
-        "gemini": {
-            "api_key": "GEMINI_API_KEY",
-            "project": "GOOGLE_CLOUD_PROJECT",
-        },
     }
     for auth_key, env_key in _ENV_MAP.get(provider, {}).items():
         val = auth.get(auth_key)

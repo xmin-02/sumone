@@ -2,7 +2,7 @@
 from ai import BaseRunner, ParsedEvent
 from ai.claude import _parse_deleted_paths
 import config as _cfg
-from state import state, get_provider_env
+from state import state
 
 
 class CodexRunner(BaseRunner):
@@ -19,11 +19,6 @@ class CodexRunner(BaseRunner):
             cmd += ["-m", state.model]
         cmd.append(message)
         return cmd
-
-    def _build_env(self):
-        env = super()._build_env()
-        env.update(get_provider_env("codex"))
-        return env
 
     def _parse_event(self, event):
         """Parse Codex JSONL event. Returns list[ParsedEvent]."""
