@@ -366,28 +366,57 @@ def _detect_chat_id(token):
 
 
 def _is_authenticated(provider_key):
-    """Check if a provider CLI is already authenticated."""
+    """Check if a provider CLI is already authenticated.
+
+    Uses CLI command first, falls back to credential file detection.
+    """
     info = AI_PROVIDERS[provider_key]
     cli = info["cli_cmd"]
-    if not shutil.which(cli):
+    resolved = shutil.which(cli)
+
+    if provider_key == "claude":
+        # Method 1: CLI auth status
+        if resolved:
+            try:
+                r = subprocess.run(
+                    [resolved, "auth", "status"],
+                    capture_output=True, timeout=5,
+                )
+                if r.returncode == 0:
+                    return True
+            except Exception:
+                pass
+        # Method 2: credential files
+        claude_dir = os.path.expanduser("~/.claude")
+        for name in [".credentials.json", "credentials.json", "oauth_token"]:
+            if os.path.isfile(os.path.join(claude_dir, name)):
+                return True
         return False
-    try:
-        if provider_key == "claude":
-            r = subprocess.run(
-                [cli, "auth", "status"],
-                capture_output=True, timeout=5,
-            )
-            return r.returncode == 0
-        elif provider_key == "codex":
-            return bool(os.environ.get("OPENAI_API_KEY"))
-        elif provider_key == "gemini":
-            r = subprocess.run(
-                [cli, "--version"],
-                capture_output=True, timeout=5,
-            )
-            return r.returncode == 0
-    except Exception:
-        pass
+
+    elif provider_key == "codex":
+        if os.environ.get("OPENAI_API_KEY"):
+            return True
+        # Check codex config
+        for p in ["~/.codex/config.json", "~/.config/codex/config.json"]:
+            if os.path.isfile(os.path.expanduser(p)):
+                return True
+        return False
+
+    elif provider_key == "gemini":
+        # Check credential file (same as main.py)
+        if os.path.isfile(os.path.expanduser("~/.gemini/oauth_creds.json")):
+            return True
+        if resolved:
+            try:
+                r = subprocess.run(
+                    [resolved, "--version"],
+                    capture_output=True, timeout=5,
+                )
+                return r.returncode == 0
+            except Exception:
+                pass
+        return False
+
     return False
 
 
