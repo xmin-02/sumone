@@ -396,8 +396,21 @@ def _is_authenticated(provider_key):
     elif provider_key == "codex":
         if os.environ.get("OPENAI_API_KEY"):
             return True
-        # Check codex config
-        for p in ["~/.codex/config.json", "~/.config/codex/config.json"]:
+        # Method 1: CLI login status (same as bot runtime)
+        if resolved:
+            try:
+                r = subprocess.run(
+                    [resolved, "login", "status"],
+                    capture_output=True, timeout=5,
+                )
+                if r.returncode == 0:
+                    return True
+            except Exception:
+                pass
+        # Method 2: credential files
+        for p in ["~/.codex/config.json", "~/.config/codex/config.json",
+                   "~/.codex/auth.json", "~/.config/codex/auth.json",
+                   "~/.codex/.credentials.json"]:
             if os.path.isfile(os.path.expanduser(p)):
                 return True
         return False
