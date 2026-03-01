@@ -77,7 +77,10 @@ download_bot() {
     echo -e "  ${BOLD}[2/4] Downloading bot files...${NC}\n"
 
     # DDD directory structure
-    mkdir -p "$INSTALL_DIR/bot/i18n" "$INSTALL_DIR/bot/commands" "$INSTALL_DIR/bot/ai"
+    mkdir -p "$INSTALL_DIR/bot/i18n" "$INSTALL_DIR/bot/ai"
+    mkdir -p "$INSTALL_DIR/bot/commands/core" "$INSTALL_DIR/bot/commands/ai"
+    mkdir -p "$INSTALL_DIR/bot/commands/file" "$INSTALL_DIR/bot/commands/session"
+    mkdir -p "$INSTALL_DIR/bot/commands/usage" "$INSTALL_DIR/bot/commands/system"
     mkdir -p "$INSTALL_DIR/config" "$INSTALL_DIR/data/sessions" "$INSTALL_DIR/data/downloads"
     mkdir -p "$INSTALL_DIR/data/snapshots" "$INSTALL_DIR/logs" "$INSTALL_DIR/bin"
 
@@ -99,13 +102,22 @@ download_bot() {
         "bot/i18n/ko.json:bot/i18n/ko.json"
         "bot/i18n/en.json:bot/i18n/en.json"
         "bot/commands/__init__.py:bot/commands/__init__.py"
-        "bot/commands/basic.py:bot/commands/basic.py"
-        "bot/commands/filesystem.py:bot/commands/filesystem.py"
-        "bot/commands/settings.py:bot/commands/settings.py"
-        "bot/commands/update.py:bot/commands/update.py"
-        "bot/commands/total_tokens.py:bot/commands/total_tokens.py"
-        "bot/commands/skills.py:bot/commands/skills.py"
-        "bot/commands/session_cmd.py:bot/commands/session_cmd.py"
+        "bot/commands/core/help.py:bot/commands/core/help.py"
+        "bot/commands/core/status.py:bot/commands/core/status.py"
+        "bot/commands/core/cancel.py:bot/commands/core/cancel.py"
+        "bot/commands/core/restart.py:bot/commands/core/restart.py"
+        "bot/commands/ai/model.py:bot/commands/ai/model.py"
+        "bot/commands/ai/cost.py:bot/commands/ai/cost.py"
+        "bot/commands/file/pwd.py:bot/commands/file/pwd.py"
+        "bot/commands/file/cd.py:bot/commands/file/cd.py"
+        "bot/commands/file/ls.py:bot/commands/file/ls.py"
+        "bot/commands/session/session.py:bot/commands/session/session.py"
+        "bot/commands/session/clear.py:bot/commands/session/clear.py"
+        "bot/commands/usage/total_tokens.py:bot/commands/usage/total_tokens.py"
+        "bot/commands/system/settings.py:bot/commands/system/settings.py"
+        "bot/commands/system/update.py:bot/commands/system/update.py"
+        "bot/commands/system/skills.py:bot/commands/system/skills.py"
+        "bot/commands/system/builtin.py:bot/commands/system/builtin.py"
     )
 
     local total=${#files[@]} i=0

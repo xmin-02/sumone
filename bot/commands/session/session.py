@@ -1,13 +1,13 @@
-"""Session commands: /session, /clear, selection, and question answering."""
+"""Session commands: /session, selection, and question answering."""
 import re
+import os
 
 from commands import command
 from i18n import t
 from config import update_config, AI_MODELS, log
 from state import state, switch_provider
 from telegram import escape_html, send_html
-from sessions import get_sessions, get_provider_sessions, get_session_model, get_session_provider, find_project_dirs
-import os
+from sessions import get_provider_sessions, get_session_model, get_session_provider, find_project_dirs
 
 
 def _save_session_id(sid):
@@ -32,15 +32,6 @@ def handle_session(text):
            + "\n".join(lines)
            + f"\n{'━'*25}\n{t('session.prompt')}")
     send_html(msg)
-
-
-@command("/clear", aliases=["/new"])
-def handle_clear(text):
-    state._provider_sessions.pop(state.provider, None)
-    state.session_id = None; state.selecting = False
-    state.answering = False; state.pending_question = None
-    _save_session_id(None)
-    send_html(f"<b>{t('session.cleared')}</b>\n{t('session.cleared_desc')}")
 
 
 def show_questions(questions, sid):
@@ -98,7 +89,6 @@ def handle_answer(text):
 
 def _connect_session(sid):
     """Connect to a session, auto-switching provider if needed."""
-    # Check if session belongs to a different provider
     sess_provider = get_session_provider(sid)
     if sess_provider and sess_provider != state.provider:
         switch_provider(sess_provider)
@@ -131,12 +121,10 @@ def handle_selection(text):
         return
     uuid_pat = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
     if uuid_pat.match(text):
-        # Check Claude JSONL dirs
         found = False
         for proj_dir in find_project_dirs():
             if os.path.exists(os.path.join(proj_dir, f"{text}.jsonl")):
                 found = True; break
-        # Also check sumone sessions
         if not found:
             from sessions import _SUMONE_SESSIONS
             if os.path.isfile(os.path.join(_SUMONE_SESSIONS, f"{text}.json")):

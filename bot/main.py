@@ -22,20 +22,12 @@ from downloader import download_tg_file, build_file_prompt
 from ai import get_runner, RunnerCallbacks, format_time
 from sessions import get_session_model
 
-# Import command modules to trigger @command/@callback decorator registration
-import commands.basic       # noqa: F401
-import commands.filesystem  # noqa: F401
-import commands.settings    # noqa: F401
-import commands.update      # noqa: F401
-import commands.total_tokens  # noqa: F401
-import commands.skills      # noqa: F401
-import commands.session_cmd  # noqa: F401
-
+# commands/__init__.py auto-imports all subpackage modules via _auto_import()
 from commands import dispatch, dispatch_callback
-from commands.session_cmd import (
+from commands.session.session import (
     show_questions, handle_answer, handle_selection, _save_session_id,
 )
-from commands.total_tokens import handle_token_input
+from commands.usage.total_tokens import handle_token_input
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +453,7 @@ def _sync_bot_commands():
 
         # 2. Auto-discover plugin skills and register per-plugin menu commands
         plugin_groups = _discover_plugin_skills()
-        from commands.skills import register_plugin_menus
+        from commands.system.skills import register_plugin_menus
         register_plugin_menus(plugin_groups)
 
         for plugin_name, skills_list in plugin_groups.items():
@@ -657,7 +649,7 @@ def poll_loop():
 def _bootstrap_files():
     """One-time full sync if local update.py lacks the new all-files updater."""
     bot_dir = os.path.dirname(os.path.abspath(__file__))
-    update_path = os.path.join(bot_dir, "commands", "update.py")
+    update_path = os.path.join(bot_dir, "commands", "system", "update.py")
     marker = "_fetch_bot_file_list"
     try:
         with open(update_path, encoding="utf-8") as f:

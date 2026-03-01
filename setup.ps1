@@ -66,7 +66,10 @@ function Download-Bot {
     Write-Host "  [2/4] Downloading bot files...`n" -ForegroundColor White
 
     # DDD directory structure
-    foreach ($sub in @("bot", "bot\i18n", "bot\commands", "bot\ai",
+    foreach ($sub in @("bot", "bot\i18n", "bot\ai",
+                        "bot\commands", "bot\commands\core", "bot\commands\ai",
+                        "bot\commands\file", "bot\commands\session",
+                        "bot\commands\usage", "bot\commands\system",
                         "config", "data\sessions", "data\downloads",
                         "data\snapshots", "logs", "bin")) {
         $dir = Join-Path $INSTALL_DIR $sub
@@ -74,30 +77,39 @@ function Download-Bot {
     }
 
     $files = @(
-        @("bot/main.py",                 "bot/main.py"),
-        @("bot/config.py",               "bot/config.py"),
-        @("bot/state.py",                "bot/state.py"),
-        @("bot/telegram.py",             "bot/telegram.py"),
-        @("bot/tokens.py",               "bot/tokens.py"),
-        @("bot/sessions.py",             "bot/sessions.py"),
-        @("bot/downloader.py",           "bot/downloader.py"),
-        @("bot/fileviewer.py",           "bot/fileviewer.py"),
-        @("bot/onboard.py",             "bot/onboard.py"),
-        @("bot/ai/__init__.py",          "bot/ai/__init__.py"),
-        @("bot/ai/claude.py",            "bot/ai/claude.py"),
-        @("bot/ai/codex.py",             "bot/ai/codex.py"),
-        @("bot/ai/gemini.py",            "bot/ai/gemini.py"),
-        @("bot/i18n/__init__.py",        "bot/i18n/__init__.py"),
-        @("bot/i18n/ko.json",            "bot/i18n/ko.json"),
-        @("bot/i18n/en.json",            "bot/i18n/en.json"),
-        @("bot/commands/__init__.py",    "bot/commands/__init__.py"),
-        @("bot/commands/basic.py",       "bot/commands/basic.py"),
-        @("bot/commands/filesystem.py",  "bot/commands/filesystem.py"),
-        @("bot/commands/settings.py",    "bot/commands/settings.py"),
-        @("bot/commands/update.py",      "bot/commands/update.py"),
-        @("bot/commands/total_tokens.py","bot/commands/total_tokens.py"),
-        @("bot/commands/skills.py",      "bot/commands/skills.py"),
-        @("bot/commands/session_cmd.py", "bot/commands/session_cmd.py")
+        @("bot/main.py",                          "bot/main.py"),
+        @("bot/config.py",                        "bot/config.py"),
+        @("bot/state.py",                         "bot/state.py"),
+        @("bot/telegram.py",                      "bot/telegram.py"),
+        @("bot/tokens.py",                        "bot/tokens.py"),
+        @("bot/sessions.py",                      "bot/sessions.py"),
+        @("bot/downloader.py",                    "bot/downloader.py"),
+        @("bot/fileviewer.py",                    "bot/fileviewer.py"),
+        @("bot/onboard.py",                       "bot/onboard.py"),
+        @("bot/ai/__init__.py",                   "bot/ai/__init__.py"),
+        @("bot/ai/claude.py",                     "bot/ai/claude.py"),
+        @("bot/ai/codex.py",                      "bot/ai/codex.py"),
+        @("bot/ai/gemini.py",                     "bot/ai/gemini.py"),
+        @("bot/i18n/__init__.py",                 "bot/i18n/__init__.py"),
+        @("bot/i18n/ko.json",                     "bot/i18n/ko.json"),
+        @("bot/i18n/en.json",                     "bot/i18n/en.json"),
+        @("bot/commands/__init__.py",             "bot/commands/__init__.py"),
+        @("bot/commands/core/help.py",            "bot/commands/core/help.py"),
+        @("bot/commands/core/status.py",          "bot/commands/core/status.py"),
+        @("bot/commands/core/cancel.py",          "bot/commands/core/cancel.py"),
+        @("bot/commands/core/restart.py",         "bot/commands/core/restart.py"),
+        @("bot/commands/ai/model.py",             "bot/commands/ai/model.py"),
+        @("bot/commands/ai/cost.py",              "bot/commands/ai/cost.py"),
+        @("bot/commands/file/pwd.py",             "bot/commands/file/pwd.py"),
+        @("bot/commands/file/cd.py",              "bot/commands/file/cd.py"),
+        @("bot/commands/file/ls.py",              "bot/commands/file/ls.py"),
+        @("bot/commands/session/session.py",      "bot/commands/session/session.py"),
+        @("bot/commands/session/clear.py",        "bot/commands/session/clear.py"),
+        @("bot/commands/usage/total_tokens.py",   "bot/commands/usage/total_tokens.py"),
+        @("bot/commands/system/settings.py",      "bot/commands/system/settings.py"),
+        @("bot/commands/system/update.py",        "bot/commands/system/update.py"),
+        @("bot/commands/system/skills.py",        "bot/commands/system/skills.py"),
+        @("bot/commands/system/builtin.py",       "bot/commands/system/builtin.py")
     )
 
     $total = $files.Count
