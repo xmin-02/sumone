@@ -750,18 +750,13 @@ def _detect_cli_status():
     import shutil as _sh
     from state import get_provider_env
     # Ensure common CLI paths are in PATH (exec may strip them)
-    _extra = [os.path.expanduser("~/.local/bin"), "/opt/homebrew/bin", "/opt/homebrew/sbin",
-              "/usr/local/bin"]
+    _extra = [os.path.expanduser("~/.local/bin"), os.path.expanduser("~/.npm-global/bin"),
+              "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
     _cur_path = os.environ.get("PATH", "")
     _missing = [p for p in _extra if p not in _cur_path]
     if _missing:
         os.environ["PATH"] = ":".join(_missing) + ":" + _cur_path
     # Auth check commands per provider (exit code 0 = authenticated)
-    _auth_checks = {
-        "codex": lambda res: _sp.run([res, "login", "status"], capture_output=True, timeout=5).returncode == 0,
-        "gemini": lambda res: os.path.isfile(os.path.expanduser("~/.gemini/oauth_creds.json")),
-        "claude": lambda res: _sp.run([res, "auth", "status"], capture_output=True, timeout=5).returncode == 0,
-    }
     for provider, info in config.AI_MODELS.items():
         cmd = info.get("cli_cmd", provider)
         resolved = _sh.which(cmd)
@@ -776,16 +771,20 @@ def _detect_cli_status():
         except Exception:
             state.cli_status[provider] = False
             continue
-        # Check auth status
+        # Check auth status (same logic as connect.py _check_auth)
+        env = {**os.environ, **get_provider_env(provider)}
         try:
-            if provider == "claude":
-                env = {**os.environ, **get_provider_env("claude")}
+            if provider == "codex":
+                state.cli_status[provider] = _sp.run(
+                    [resolved, "login", "status"], capture_output=True, timeout=5, env=env
+                ).returncode == 0
+            elif provider == "gemini":
+                state.cli_status[provider] = os.path.isfile(
+                    os.path.expanduser("~/.gemini/oauth_creds.json"))
+            else:  # claude
                 state.cli_status[provider] = _sp.run(
                     [resolved, "auth", "status"], capture_output=True, timeout=5, env=env
                 ).returncode == 0
-            else:
-                checker = _auth_checks.get(provider)
-                state.cli_status[provider] = checker(resolved) if checker else True
         except Exception:
             state.cli_status[provider] = False
     log.info("CLI status: %s", state.cli_status)
