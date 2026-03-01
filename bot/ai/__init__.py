@@ -117,6 +117,7 @@ class BaseRunner:
                 cwd=_cfg.WORK_DIR, env=env,
             )
             if IS_WINDOWS:
+                popen_kwargs["shell"] = True
                 popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
             with state.lock:
@@ -547,6 +548,7 @@ class BaseRunner:
             try:
                 kw = {}
                 if IS_WINDOWS:
+                    kw["shell"] = True
                     kw["creationflags"] = subprocess.CREATE_NO_WINDOW
                 result = subprocess.run(
                     [cmd, "--version"], capture_output=True, timeout=10, **kw,
