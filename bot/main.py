@@ -25,6 +25,7 @@ from tokens import token_footer, get_monthly_tokens, publish_token_data, PUBLISH
 from downloader import download_tg_file, build_file_prompt
 from ai import get_runner, RunnerCallbacks, format_time
 from sessions import get_session_model
+import cli_watcher
 
 # commands/__init__.py auto-imports all subpackage modules via _auto_import()
 from commands import dispatch, dispatch_callback
@@ -644,6 +645,9 @@ def poll_loop():
     threading.Thread(target=_token_publish_loop, daemon=True).start()
     log.info("Token publish thread started (interval: %ds)", PUBLISH_INTERVAL)
 
+    # CLI direct-response watcher (forwards external CLI output to Telegram)
+    cli_watcher.start()
+
     state.global_tokens = get_monthly_tokens()
     log.info("Monthly tokens loaded: %d", state.global_tokens)
 
@@ -1108,6 +1112,7 @@ def main():
 
     def sig_handler(signum, frame):
         log.info("Signal %s, exiting.", signum)
+        cli_watcher.stop()
         _stop_file_viewer()
         with state.lock:
             if state.ai_proc and state.ai_proc.poll() is None:

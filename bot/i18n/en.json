@@ -94,6 +94,9 @@
   "queued": "Message queued (#{pos}). Will be processed automatically after current task.",
   "bot_duplicate": "Duplicate detected: terminated {count} existing bot process(es) and restarting.",
   "bot_started": "sumone Bot started — {provider} ({model})\nSend /help to see available commands.",
+  "cli_watcher": {
+    "header": "CLI Direct Response"
+  },
   "restart": {
     "shutting_down": "Restarting bot..."
   },

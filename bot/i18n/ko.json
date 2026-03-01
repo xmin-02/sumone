@@ -94,6 +94,9 @@
   "queued": "메시지가 대기열에 추가되었습니다. (#{pos}) 현재 작업 완료 후 자동으로 처리됩니다.",
   "bot_duplicate": "중복 실행 감지: 기존 봇 프로세스 {count}개를 종료하고 새로 시작합니다.",
   "bot_started": "sumone Bot 시작됨 — {provider} ({model})\n/help 로 명령어를 확인하세요.",
+  "cli_watcher": {
+    "header": "CLI 직접 응답"
+  },
   "restart": {
     "shutting_down": "봇을 재시작합니다..."
   },
