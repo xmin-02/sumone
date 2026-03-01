@@ -459,7 +459,10 @@ def _try_install(provider_key, lang):
         print(f"\n{_t(lang, 'installing').format(name=name)}")
         print(f"    $ {' '.join(cmd)}\n")
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            # Windows: npm/npx are .cmd files, need shell=True to execute
+            use_shell = IS_WINDOWS
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180,
+                                    shell=use_shell)
             # Re-check PATH after install
             _ensure_path()
             if result.returncode == 0 and _is_cli_installed(info["cli_cmd"]):
@@ -535,7 +538,7 @@ def _try_auth(provider_key, lang):
 
     print(f"\n{_t(lang, 'auth_start').format(name=name)}\n")
     try:
-        result = subprocess.run(cmd, timeout=300, env=env)
+        result = subprocess.run(cmd, timeout=300, env=env, shell=IS_WINDOWS)
         if result.returncode == 0:
             print(f"\n{_t(lang, 'auth_ok').format(name=name)}")
             return True
