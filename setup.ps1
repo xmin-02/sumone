@@ -20,8 +20,8 @@ function Write-Err   { Write-Host "  " -NoNewline; Write-Host "[ERR ]" -Foregrou
 
 $GITHUB_REPO = "xmin-02/sumone"
 $GITHUB_RAW  = "https://raw.githubusercontent.com/$GITHUB_REPO/main"
-$INSTALL_DIR = Join-Path $env:USERPROFILE ".claude-telegram-bot"
-$BOT_PATH    = Join-Path $INSTALL_DIR "main.py"
+$INSTALL_DIR = Join-Path $env:USERPROFILE ".sumone"
+$BOT_PATH    = Join-Path $INSTALL_DIR "bot\main.py"
 
 # ── Banner ──────────────────────────────────────────────────────────────────
 function Print-Banner {
@@ -65,36 +65,39 @@ function Download-Bot {
     Print-Banner
     Write-Host "  [2/4] Downloading bot files...`n" -ForegroundColor White
 
-    foreach ($sub in @("", "i18n", "commands", "ai")) {
-        $dir = if ($sub) { Join-Path $INSTALL_DIR $sub } else { $INSTALL_DIR }
+    # DDD directory structure
+    foreach ($sub in @("bot", "bot\i18n", "bot\commands", "bot\ai",
+                        "config", "data\sessions", "data\downloads",
+                        "data\snapshots", "logs", "bin")) {
+        $dir = Join-Path $INSTALL_DIR $sub
         if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     }
 
     $files = @(
-        @("bot/main.py",                 "main.py"),
-        @("bot/config.py",               "config.py"),
-        @("bot/state.py",                "state.py"),
-        @("bot/telegram.py",             "telegram.py"),
-        @("bot/tokens.py",               "tokens.py"),
-        @("bot/sessions.py",             "sessions.py"),
-        @("bot/downloader.py",           "downloader.py"),
-        @("bot/fileviewer.py",           "fileviewer.py"),
-        @("bot/onboard.py",              "onboard.py"),
-        @("bot/ai/__init__.py",          "ai/__init__.py"),
-        @("bot/ai/claude.py",            "ai/claude.py"),
-        @("bot/ai/codex.py",             "ai/codex.py"),
-        @("bot/ai/gemini.py",            "ai/gemini.py"),
-        @("bot/i18n/__init__.py",        "i18n/__init__.py"),
-        @("bot/i18n/ko.json",            "i18n/ko.json"),
-        @("bot/i18n/en.json",            "i18n/en.json"),
-        @("bot/commands/__init__.py",    "commands/__init__.py"),
-        @("bot/commands/basic.py",       "commands/basic.py"),
-        @("bot/commands/filesystem.py",  "commands/filesystem.py"),
-        @("bot/commands/settings.py",    "commands/settings.py"),
-        @("bot/commands/update.py",      "commands/update.py"),
-        @("bot/commands/total_tokens.py","commands/total_tokens.py"),
-        @("bot/commands/skills.py",      "commands/skills.py"),
-        @("bot/commands/session_cmd.py", "commands/session_cmd.py")
+        @("bot/main.py",                 "bot/main.py"),
+        @("bot/config.py",               "bot/config.py"),
+        @("bot/state.py",                "bot/state.py"),
+        @("bot/telegram.py",             "bot/telegram.py"),
+        @("bot/tokens.py",               "bot/tokens.py"),
+        @("bot/sessions.py",             "bot/sessions.py"),
+        @("bot/downloader.py",           "bot/downloader.py"),
+        @("bot/fileviewer.py",           "bot/fileviewer.py"),
+        @("bot/onboard.py",             "bot/onboard.py"),
+        @("bot/ai/__init__.py",          "bot/ai/__init__.py"),
+        @("bot/ai/claude.py",            "bot/ai/claude.py"),
+        @("bot/ai/codex.py",             "bot/ai/codex.py"),
+        @("bot/ai/gemini.py",            "bot/ai/gemini.py"),
+        @("bot/i18n/__init__.py",        "bot/i18n/__init__.py"),
+        @("bot/i18n/ko.json",            "bot/i18n/ko.json"),
+        @("bot/i18n/en.json",            "bot/i18n/en.json"),
+        @("bot/commands/__init__.py",    "bot/commands/__init__.py"),
+        @("bot/commands/basic.py",       "bot/commands/basic.py"),
+        @("bot/commands/filesystem.py",  "bot/commands/filesystem.py"),
+        @("bot/commands/settings.py",    "bot/commands/settings.py"),
+        @("bot/commands/update.py",      "bot/commands/update.py"),
+        @("bot/commands/total_tokens.py","bot/commands/total_tokens.py"),
+        @("bot/commands/skills.py",      "bot/commands/skills.py"),
+        @("bot/commands/session_cmd.py", "bot/commands/session_cmd.py")
     )
 
     $total = $files.Count
@@ -121,7 +124,7 @@ function Download-Bot {
 
 # ── cloudflared ───────────────────────────────────────────────────────────────
 function Install-Cloudflared {
-    $cfExe = Join-Path $INSTALL_DIR "cloudflared.exe"
+    $cfExe = Join-Path $INSTALL_DIR "bin\cloudflared.exe"
     $cfCmd = Get-Command "cloudflared" -ErrorAction SilentlyContinue
     if ($cfCmd -or (Test-Path $cfExe)) {
         Write-Ok "cloudflared: already installed"
@@ -139,9 +142,9 @@ function Install-Cloudflared {
 
 # ── [3/4] Onboarding ─────────────────────────────────────────────────────────
 function Run-Onboarding {
-    & $script:PYTHON (Join-Path $INSTALL_DIR "onboard.py")
+    & $script:PYTHON (Join-Path $INSTALL_DIR "bot\onboard.py")
     if ($LASTEXITCODE -ne 0) {
-        Write-Warn "Onboarding exited early — run '$($script:PYTHON) $(Join-Path $INSTALL_DIR "onboard.py")' to reconfigure."
+        Write-Warn "Onboarding exited early — run '$($script:PYTHON) $(Join-Path $INSTALL_DIR "bot\onboard.py")' to reconfigure."
         exit 1
     }
 }
@@ -152,12 +155,13 @@ function Register-SumoneCommand {
     if (-not $pythonPath) { $pythonPath = $script:PYTHON }
 
     $batContent = "@echo off`r`n`"$pythonPath`" `"$BOT_PATH`" %*"
-    $batPath    = Join-Path $INSTALL_DIR "sumone.bat"
+    $binDir     = Join-Path $INSTALL_DIR "bin"
+    $batPath    = Join-Path $binDir "sumone.bat"
     [System.IO.File]::WriteAllText($batPath, $batContent, [System.Text.Encoding]::ASCII)
 
     $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if ($currentPath -notlike "*$INSTALL_DIR*") {
-        [Environment]::SetEnvironmentVariable("Path", "$currentPath;$INSTALL_DIR", "User")
+    if ($currentPath -notlike "*$binDir*") {
+        [Environment]::SetEnvironmentVariable("Path", "$currentPath;$binDir", "User")
         Write-Ok "'sumone' command registered (restart terminal to use)"
     } else {
         Write-Ok "'sumone' command registered"
@@ -231,7 +235,7 @@ function Setup-AutoStart {
         Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
         Write-Ok "Task Scheduler registered (auto-start at logon)"
         Write-Host "  Status:  Get-ScheduledTask -TaskName $taskName | Select State" -ForegroundColor DarkGray
-        Write-Host "  Logs:    Get-Content '$INSTALL_DIR\bot.log' -Tail 20"          -ForegroundColor DarkGray
+        Write-Host "  Logs:    Get-Content '$INSTALL_DIR\logs\bot.log' -Tail 20"     -ForegroundColor DarkGray
     } catch {
         Write-Warn "Task Scheduler failed: $_"
         Write-Host "  Run manually: $pythonPath `"$BOT_PATH`""

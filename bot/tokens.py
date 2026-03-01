@@ -8,13 +8,13 @@ import json
 import os
 import time
 
-from config import BOT_TOKEN, REMOTE_BOTS, settings, log
+from config import BOT_TOKEN, DATA_DIR, REMOTE_BOTS, settings, log
 from sessions import find_project_dirs
 from state import state
 from telegram import tg_api_raw
 
 _token_cache = {}
-_TOKEN_LOG = os.path.expanduser("~/.sumone/token_log.jsonl")
+_TOKEN_LOG = os.path.join(DATA_DIR, "token_log.jsonl")
 
 PUBLISH_LANG = "zu"
 PUBLISH_INTERVAL = 300

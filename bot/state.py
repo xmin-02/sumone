@@ -6,10 +6,10 @@ import os
 import threading
 import time
 from datetime import datetime
-from config import _config, SCRIPT_DIR, log
+from config import _config, DATA_DIR, log
 
-_MODIFIED_FILES_PATH = os.path.join(SCRIPT_DIR, "modified_files.json")
-_SNAPSHOTS_DIR = os.path.join(SCRIPT_DIR, ".snapshots")
+_MODIFIED_FILES_PATH = os.path.join(DATA_DIR, "modified_files.json")
+_SNAPSHOTS_DIR = os.path.join(DATA_DIR, "snapshots")
 
 
 def _load_modified_files():

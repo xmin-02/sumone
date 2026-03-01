@@ -106,7 +106,7 @@ class ClaudeRunner(BaseRunner):
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "User-Agent": "claude-telegram-bot/1.0",
+                "User-Agent": "sumone/1.0",
             },
             method="POST",
         )

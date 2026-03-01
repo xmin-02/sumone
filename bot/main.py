@@ -804,7 +804,150 @@ def _apply_default_model():
     config.update_config("model", state.model)
 
 
+def _migrate_old_layout():
+    """Migrate data from old ~/.claude-telegram-bot/ and ~/.sumone/ to DDD layout."""
+    import shutil
+    old_bot = os.path.expanduser("~/.claude-telegram-bot")
+    root = config.ROOT_DIR
+    data_dir = config.DATA_DIR
+    bin_dir = config.BIN_DIR
+    log_dir = config.LOG_DIR
+
+    migrated = []
+
+    # --- Data: ~/.sumone/sessions/ → ~/.sumone/data/sessions/ ---
+    old_sessions = os.path.join(root, "sessions")
+    new_sessions = os.path.join(data_dir, "sessions")
+    if os.path.isdir(old_sessions) and old_sessions != new_sessions:
+        for fname in os.listdir(old_sessions):
+            src = os.path.join(old_sessions, fname)
+            dst = os.path.join(new_sessions, fname)
+            if os.path.isfile(src) and not os.path.isfile(dst):
+                shutil.move(src, dst)
+        try:
+            os.rmdir(old_sessions)
+            migrated.append("sessions/")
+        except OSError:
+            pass
+
+    # --- Data: ~/.sumone/token_log.jsonl → ~/.sumone/data/token_log.jsonl ---
+    old_tlog = os.path.join(root, "token_log.jsonl")
+    new_tlog = os.path.join(data_dir, "token_log.jsonl")
+    if os.path.isfile(old_tlog) and not os.path.isfile(new_tlog):
+        shutil.move(old_tlog, new_tlog)
+        migrated.append("token_log.jsonl")
+
+    # --- Data from old bot dir ---
+    if os.path.isdir(old_bot):
+        # downloads/
+        old_dl = os.path.join(old_bot, "downloads")
+        new_dl = os.path.join(data_dir, "downloads")
+        if os.path.isdir(old_dl):
+            for fname in os.listdir(old_dl):
+                src = os.path.join(old_dl, fname)
+                dst = os.path.join(new_dl, fname)
+                if os.path.isfile(src) and not os.path.isfile(dst):
+                    shutil.move(src, dst)
+            migrated.append("downloads/")
+
+        # .snapshots/ → data/snapshots/
+        old_snap = os.path.join(old_bot, ".snapshots")
+        new_snap = os.path.join(data_dir, "snapshots")
+        if os.path.isdir(old_snap):
+            for fname in os.listdir(old_snap):
+                src = os.path.join(old_snap, fname)
+                dst = os.path.join(new_snap, fname)
+                if os.path.isfile(src) and not os.path.isfile(dst):
+                    shutil.move(src, dst)
+            migrated.append("snapshots/")
+
+        # modified_files.json
+        old_mf = os.path.join(old_bot, "modified_files.json")
+        new_mf = os.path.join(data_dir, "modified_files.json")
+        if os.path.isfile(old_mf) and not os.path.isfile(new_mf):
+            shutil.copy2(old_mf, new_mf)
+            migrated.append("modified_files.json")
+
+        # cloudflared → bin/
+        for cf_name in ["cloudflared", "cloudflared.exe"]:
+            old_cf = os.path.join(old_bot, cf_name)
+            new_cf = os.path.join(bin_dir, cf_name)
+            if os.path.isfile(old_cf) and not os.path.isfile(new_cf):
+                shutil.copy2(old_cf, new_cf)
+                os.chmod(new_cf, 0o755)
+                migrated.append(cf_name)
+
+        # logs
+        for lf in ["bot.log", "bot-stdout.log", "bot-stderr.log"]:
+            old_lf = os.path.join(old_bot, lf)
+            new_lf = os.path.join(log_dir, lf)
+            if os.path.isfile(old_lf) and not os.path.isfile(new_lf):
+                shutil.copy2(old_lf, new_lf)
+
+    # --- Update launchd plist (macOS) ---
+    _update_launchd_plist()
+
+    if migrated:
+        config.log.info("Migration complete: %s", ", ".join(migrated))
+
+
+def _update_launchd_plist():
+    """Update macOS launchd plist to point to new paths."""
+    if config.IS_WINDOWS:
+        return
+    import platform
+    if platform.system() != "Darwin":
+        return
+
+    bot_main = os.path.join(config.BOT_DIR, "main.py")
+    log_dir = config.LOG_DIR
+    plist_dir = os.path.expanduser("~/Library/LaunchAgents")
+
+    # Find and update any existing plist
+    for name in ["com.claude.telegram-bot.plist", "com.sumone.telegram-bot.plist"]:
+        plist_path = os.path.join(plist_dir, name)
+        if not os.path.isfile(plist_path):
+            continue
+        try:
+            with open(plist_path, encoding="utf-8") as f:
+                content = f.read()
+            if bot_main in content and log_dir in content:
+                continue  # already up to date
+            # Rewrite plist with correct paths
+            import subprocess
+            python_path = subprocess.check_output(
+                ["which", "python3"], text=True).strip() or "python3"
+            new_plist = (
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+                '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+                '<plist version="1.0"><dict>\n'
+                '    <key>Label</key><string>com.sumone.telegram-bot</string>\n'
+                '    <key>ProgramArguments</key>\n'
+                f'    <array><string>{python_path}</string>'
+                f'<string>{bot_main}</string></array>\n'
+                '    <key>RunAtLoad</key><true/>\n'
+                '    <key>KeepAlive</key><true/>\n'
+                f'    <key>StandardOutPath</key><string>{log_dir}/bot-stdout.log</string>\n'
+                f'    <key>StandardErrorPath</key><string>{log_dir}/bot-stderr.log</string>\n'
+                '</dict></plist>\n'
+            )
+            new_path = os.path.join(plist_dir, "com.sumone.telegram-bot.plist")
+            with open(new_path, "w", encoding="utf-8") as f:
+                f.write(new_plist)
+            # Remove old plist if renamed
+            if name != "com.sumone.telegram-bot.plist":
+                try:
+                    os.remove(plist_path)
+                except OSError:
+                    pass
+            config.log.info("launchd plist updated: %s", new_path)
+        except Exception as e:
+            config.log.warning("Failed to update launchd plist: %s", e)
+
+
 def main():
+    _migrate_old_layout()
     _bootstrap_files()
     i18n.load(config.LANG)
     _apply_default_model()

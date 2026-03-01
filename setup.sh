@@ -15,8 +15,8 @@ err()   { echo -e "  ${RED}[ERR ]${NC} $*"; }
 
 GITHUB_REPO="xmin-02/sumone"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
-INSTALL_DIR="$HOME/.claude-telegram-bot"
-BOT_PATH="$INSTALL_DIR/main.py"
+INSTALL_DIR="$HOME/.sumone"
+BOT_PATH="$INSTALL_DIR/bot/main.py"
 
 # ── Banner ──────────────────────────────────────────────────────────────────
 print_banner() {
@@ -76,33 +76,36 @@ download_bot() {
     print_banner
     echo -e "  ${BOLD}[2/4] Downloading bot files...${NC}\n"
 
-    mkdir -p "$INSTALL_DIR/i18n" "$INSTALL_DIR/commands" "$INSTALL_DIR/ai"
+    # DDD directory structure
+    mkdir -p "$INSTALL_DIR/bot/i18n" "$INSTALL_DIR/bot/commands" "$INSTALL_DIR/bot/ai"
+    mkdir -p "$INSTALL_DIR/config" "$INSTALL_DIR/data/sessions" "$INSTALL_DIR/data/downloads"
+    mkdir -p "$INSTALL_DIR/data/snapshots" "$INSTALL_DIR/logs" "$INSTALL_DIR/bin"
 
     local files=(
-        "bot/main.py:main.py"
-        "bot/config.py:config.py"
-        "bot/state.py:state.py"
-        "bot/telegram.py:telegram.py"
-        "bot/tokens.py:tokens.py"
-        "bot/sessions.py:sessions.py"
-        "bot/downloader.py:downloader.py"
-        "bot/fileviewer.py:fileviewer.py"
-        "bot/onboard.py:onboard.py"
-        "bot/ai/__init__.py:ai/__init__.py"
-        "bot/ai/claude.py:ai/claude.py"
-        "bot/ai/codex.py:ai/codex.py"
-        "bot/ai/gemini.py:ai/gemini.py"
-        "bot/i18n/__init__.py:i18n/__init__.py"
-        "bot/i18n/ko.json:i18n/ko.json"
-        "bot/i18n/en.json:i18n/en.json"
-        "bot/commands/__init__.py:commands/__init__.py"
-        "bot/commands/basic.py:commands/basic.py"
-        "bot/commands/filesystem.py:commands/filesystem.py"
-        "bot/commands/settings.py:commands/settings.py"
-        "bot/commands/update.py:commands/update.py"
-        "bot/commands/total_tokens.py:commands/total_tokens.py"
-        "bot/commands/skills.py:commands/skills.py"
-        "bot/commands/session_cmd.py:commands/session_cmd.py"
+        "bot/main.py:bot/main.py"
+        "bot/config.py:bot/config.py"
+        "bot/state.py:bot/state.py"
+        "bot/telegram.py:bot/telegram.py"
+        "bot/tokens.py:bot/tokens.py"
+        "bot/sessions.py:bot/sessions.py"
+        "bot/downloader.py:bot/downloader.py"
+        "bot/fileviewer.py:bot/fileviewer.py"
+        "bot/onboard.py:bot/onboard.py"
+        "bot/ai/__init__.py:bot/ai/__init__.py"
+        "bot/ai/claude.py:bot/ai/claude.py"
+        "bot/ai/codex.py:bot/ai/codex.py"
+        "bot/ai/gemini.py:bot/ai/gemini.py"
+        "bot/i18n/__init__.py:bot/i18n/__init__.py"
+        "bot/i18n/ko.json:bot/i18n/ko.json"
+        "bot/i18n/en.json:bot/i18n/en.json"
+        "bot/commands/__init__.py:bot/commands/__init__.py"
+        "bot/commands/basic.py:bot/commands/basic.py"
+        "bot/commands/filesystem.py:bot/commands/filesystem.py"
+        "bot/commands/settings.py:bot/commands/settings.py"
+        "bot/commands/update.py:bot/commands/update.py"
+        "bot/commands/total_tokens.py:bot/commands/total_tokens.py"
+        "bot/commands/skills.py:bot/commands/skills.py"
+        "bot/commands/session_cmd.py:bot/commands/session_cmd.py"
     )
 
     local total=${#files[@]} i=0
@@ -118,7 +121,8 @@ download_bot() {
 
 # ── cloudflared ──────────────────────────────────────────────────────────────
 install_cloudflared() {
-    if command -v cloudflared &>/dev/null || [ -f "$INSTALL_DIR/cloudflared" ]; then
+    local bin_path="$INSTALL_DIR/bin/cloudflared"
+    if command -v cloudflared &>/dev/null || [ -f "$bin_path" ]; then
         ok "cloudflared: already installed"
         return
     fi
@@ -133,8 +137,8 @@ install_cloudflared() {
     if [[ "$(uname)" == "Darwin" ]]; then
         cf_url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-${arch}.tgz"
         if curl -sL "$cf_url" -o "/tmp/cloudflared.tgz" 2>/dev/null; then
-            tar -xzf /tmp/cloudflared.tgz -C "$INSTALL_DIR" cloudflared 2>/dev/null || true
-            chmod +x "$INSTALL_DIR/cloudflared" 2>/dev/null || true
+            tar -xzf /tmp/cloudflared.tgz -C "$INSTALL_DIR/bin" cloudflared 2>/dev/null || true
+            chmod +x "$bin_path" 2>/dev/null || true
             rm -f /tmp/cloudflared.tgz
             ok "cloudflared installed"
         else
@@ -142,8 +146,8 @@ install_cloudflared() {
         fi
     else
         cf_url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}"
-        if curl -sL "$cf_url" -o "$INSTALL_DIR/cloudflared" 2>/dev/null; then
-            chmod +x "$INSTALL_DIR/cloudflared"
+        if curl -sL "$cf_url" -o "$bin_path" 2>/dev/null; then
+            chmod +x "$bin_path"
             ok "cloudflared installed"
         else
             warn "cloudflared install failed (will retry on first run)"
@@ -153,8 +157,8 @@ install_cloudflared() {
 
 # ── Onboarding ───────────────────────────────────────────────────────────────
 run_onboarding() {
-    $PYTHON "$INSTALL_DIR/onboard.py" || {
-        warn "Onboarding exited early — run '$PYTHON $INSTALL_DIR/onboard.py' to reconfigure."
+    $PYTHON "$INSTALL_DIR/bot/onboard.py" || {
+        warn "Onboarding exited early — run '$PYTHON $INSTALL_DIR/bot/onboard.py' to reconfigure."
         exit 1
     }
 }
@@ -202,7 +206,7 @@ EOF
             systemctl --user start claude-telegram.service
             ok "systemd service registered (auto-start enabled)"
             echo -e "  ${DIM}Status:  systemctl --user status claude-telegram"
-            echo -e "  Logs:    tail -f $INSTALL_DIR/bot.log${NC}"
+            echo -e "  Logs:    tail -f $INSTALL_DIR/logs/bot.log${NC}"
             ;;
         macos)
             local plist="$HOME/Library/LaunchAgents/com.sumone.telegram-bot.plist"
@@ -216,14 +220,14 @@ EOF
     <array><string>$PYTHON</string><string>$BOT_PATH</string></array>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>$INSTALL_DIR/bot-stdout.log</string>
-    <key>StandardErrorPath</key><string>$INSTALL_DIR/bot-stderr.log</string>
+    <key>StandardOutPath</key><string>$INSTALL_DIR/logs/bot-stdout.log</string>
+    <key>StandardErrorPath</key><string>$INSTALL_DIR/logs/bot-stderr.log</string>
 </dict></plist>
 EOF
             launchctl load "$plist" 2>/dev/null || true
             launchctl start com.sumone.telegram-bot 2>/dev/null || true
             ok "launchd service registered"
-            echo -e "  ${DIM}Logs: tail -f $INSTALL_DIR/bot.log${NC}"
+            echo -e "  ${DIM}Logs: tail -f $INSTALL_DIR/logs/bot.log${NC}"
             ;;
         wsl)
             local marker="# sumone-bot autostart"

@@ -4,10 +4,10 @@ import os
 import re
 import time
 
-from config import IS_WINDOWS, log
+from config import IS_WINDOWS, DATA_DIR, log
 from state import state
 
-_SUMONE_SESSIONS = os.path.expanduser("~/.sumone/sessions")
+_SUMONE_SESSIONS = os.path.join(DATA_DIR, "sessions")
 
 
 def _discover_claude_roots():

@@ -440,8 +440,8 @@ class BaseRunner:
         return session_id == state.session_id
 
     def _load_session(self, session_id):
-        path = os.path.join(
-            os.path.expanduser("~/.sumone/sessions"), f"{session_id}.json")
+        from config import DATA_DIR
+        path = os.path.join(DATA_DIR, "sessions", f"{session_id}.json")
         if not os.path.isfile(path):
             return None
         try:
@@ -454,7 +454,8 @@ class BaseRunner:
         """Save raw conversation exchange for context injection."""
         if not session_id:
             return
-        session_dir = os.path.expanduser("~/.sumone/sessions")
+        from config import DATA_DIR
+        session_dir = os.path.join(DATA_DIR, "sessions")
         os.makedirs(session_dir, exist_ok=True)
         path = os.path.join(session_dir, f"{session_id}.json")
 
@@ -494,8 +495,8 @@ class BaseRunner:
             return
         if not parsed.tokens_in and not parsed.tokens_out:
             return
-        log_path = os.path.expanduser("~/.sumone/token_log.jsonl")
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        from config import DATA_DIR
+        log_path = os.path.join(DATA_DIR, "token_log.jsonl")
         entry = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "provider": self.PROVIDER,

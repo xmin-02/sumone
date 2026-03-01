@@ -3,19 +3,55 @@ import json
 import logging
 import os
 import platform
+import shutil
 
 IS_WINDOWS = platform.system() == "Windows"
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
+# ---------------------------------------------------------------------------
+# Directory structure (DDD)
+# ---------------------------------------------------------------------------
+ROOT_DIR = os.path.expanduser("~/.sumone")
+BOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+CONFIG_DIR = os.path.join(ROOT_DIR, "config")
+DATA_DIR = os.path.join(ROOT_DIR, "data")
+LOG_DIR = os.path.join(ROOT_DIR, "logs")
+BIN_DIR = os.path.join(ROOT_DIR, "bin")
+
+# Create directory structure on first run
+for _d in [CONFIG_DIR, DATA_DIR, LOG_DIR, BIN_DIR,
+           os.path.join(DATA_DIR, "sessions"),
+           os.path.join(DATA_DIR, "downloads"),
+           os.path.join(DATA_DIR, "snapshots")]:
+    os.makedirs(_d, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# Config file (with migration from old locations)
+# ---------------------------------------------------------------------------
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+if not os.path.isfile(CONFIG_FILE):
+    _OLD_CONFIG_PATHS = [
+        os.path.join(BOT_DIR, "config.json"),
+        os.path.expanduser("~/.claude-telegram-bot/config.json"),
+    ]
+    for _old in _OLD_CONFIG_PATHS:
+        if os.path.isfile(_old):
+            shutil.copy2(_old, CONFIG_FILE)
+            break
+
+# Backward compat alias
+SCRIPT_DIR = BOT_DIR
+
 
 def load_config():
+    if not os.path.isfile(CONFIG_FILE):
+        return {}
     with open(CONFIG_FILE, encoding="utf-8") as f:
         return json.load(f)
 
 _config = load_config()
-BOT_TOKEN = _config["bot_token"]
-CHAT_ID = str(_config["chat_id"])
+BOT_TOKEN = _config.get("bot_token", "")
+CHAT_ID = str(_config.get("chat_id", ""))
 WORK_DIR = _config.get("work_dir", os.path.expanduser("~"))
 LANG = _config.get("lang", "ko")
 GITHUB_REPO = _config.get("github_repo", "xmin-02/sumone")
@@ -114,7 +150,7 @@ def resolve_model(name):
         return resolved, "claude"
     return None, None
 
-LOG_FILE = os.path.join(SCRIPT_DIR, "bot.log")
+LOG_FILE = os.path.join(LOG_DIR, "bot.log")
 logging.basicConfig(
     filename=LOG_FILE, level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S",
