@@ -459,14 +459,22 @@ def _try_install(provider_key, lang):
         print(f"\n{_t(lang, 'installing').format(name=name)}")
         print(f"    $ {' '.join(cmd)}\n")
         try:
-            result = subprocess.run(cmd, timeout=180)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
             # Re-check PATH after install
             _ensure_path()
             if result.returncode == 0 and _is_cli_installed(info["cli_cmd"]):
                 print(f"\n{_t(lang, 'install_ok')}")
                 return True
-        except Exception:
-            pass
+            # Show error output for debugging
+            err_msg = (result.stderr or result.stdout or "").strip()
+            if err_msg:
+                # Show last 3 lines of error
+                lines = err_msg.splitlines()[-3:]
+                print(f"\n    {'    '.join(lines)}")
+        except subprocess.TimeoutExpired:
+            print("\n    timeout")
+        except Exception as e:
+            print(f"\n    {e}")
 
     # All install attempts failed
     print(f"\n{_t(lang, 'install_fail')}")
