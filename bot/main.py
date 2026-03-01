@@ -42,11 +42,14 @@ from commands.usage.total_tokens import handle_token_input
 def handle_message(text):
     """Send user text to Claude CLI and deliver the response."""
     # Route to connect flow if active
-    from ai.connect import is_connect_active, handle_connect_response
-    if is_connect_active():
-        if not handle_connect_response(text):
-            send_html(f"<i>{i18n.t('ai_connect.busy')}</i>")
-        return
+    try:
+        from ai.connect import is_connect_active, handle_connect_response
+        if is_connect_active():
+            if not handle_connect_response(text):
+                send_html(f"<i>{i18n.t('ai_connect.busy')}</i>")
+            return
+    except ImportError:
+        pass  # connect module unavailable (e.g. pty not available on Windows)
 
     with state.lock:
         if state.busy:
@@ -244,7 +247,10 @@ def process_update(update):
         data = cb.get("data", "")
         # Route connect: callbacks to connect flow
         if data.startswith("connect:"):
-            from ai.connect import handle_connect_callback
+            try:
+                from ai.connect import handle_connect_callback
+            except ImportError:
+                return
             from telegram import tg_api as _tga
             cb_id = cb["id"]
             payload = data[len("connect:"):]
