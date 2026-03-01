@@ -285,6 +285,7 @@ class BaseRunner:
             env["HOME"] = os.path.expanduser("~")
             extra = ":".join(p for p in [
                 os.path.expanduser("~/.local/bin"),
+                os.path.expanduser("~/.npm-global/bin"),
                 "/opt/homebrew/bin",
                 "/opt/homebrew/sbin",
                 "/usr/local/bin",
