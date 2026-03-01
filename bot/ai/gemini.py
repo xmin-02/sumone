@@ -4,7 +4,7 @@ import os
 from ai import BaseRunner, ParsedEvent
 from ai.claude import _parse_deleted_paths
 import config as _cfg
-from state import state
+from state import state, get_provider_env
 
 
 class GeminiRunner(BaseRunner):
@@ -20,6 +20,11 @@ class GeminiRunner(BaseRunner):
         if state.model:
             cmd += ["-m", state.model]
         return cmd
+
+    def _build_env(self):
+        env = super()._build_env()
+        env.update(get_provider_env("gemini"))
+        return env
 
     def _parse_event(self, event):
         """Parse Gemini JSONL event. Returns list[ParsedEvent]."""

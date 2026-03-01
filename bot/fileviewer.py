@@ -1906,7 +1906,8 @@ function _buildAiProviders() {{
   var container = document.getElementById('ai-providers');
   container.innerHTML = '';
   var provKeys = Object.keys(_aiModels);
-  var activeModel = _settings.default_model || (provKeys.length ? provKeys[0] : 'claude');
+  var activeModel = _settings.default_model;
+  if (!activeModel || !_aiModels[activeModel]) activeModel = provKeys.length ? provKeys[0] : 'claude';
   var firstInfo = _aiModels[activeModel] || {{}};
   var firstSub = firstInfo.default || (firstInfo.sub_models ? Object.keys(firstInfo.sub_models)[0] : '');
   var activeSub = _settings.default_sub_model || firstSub;
@@ -1998,7 +1999,8 @@ function gatherSettings() {{
   _putIfChanged(s, 'token_ttl', tokenTtl);
   if (_modelDirty) {{
     var _pk = Object.keys(_aiModels);
-    var _dm = _settings.default_model || (_pk.length ? _pk[0] : 'claude');
+    var _dm = _settings.default_model;
+    if (!_dm || !_aiModels[_dm]) _dm = _pk.length ? _pk[0] : 'claude';
     var _di = _aiModels[_dm] || {{}};
     var _ds = _settings.default_sub_model || _di.default || (_di.sub_models ? Object.keys(_di.sub_models)[0] : '');
     _putIfChanged(s, 'default_model', _dm);

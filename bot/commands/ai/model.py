@@ -68,7 +68,8 @@ def handle_model(text):
             default_prov = "claude"
         switch_provider(default_prov)
         prov_info = AI_MODELS[default_prov]
-        default_sub = prov_info.get("default", list(prov_info["sub_models"].keys())[0])
+        subs = prov_info.get("sub_models", {})
+        default_sub = prov_info.get("default", list(subs.keys())[0] if subs else None)
         state.model = prov_info["sub_models"].get(default_sub)
         state._provider_models[state.provider] = state.model
         update_config("model", state.model)
