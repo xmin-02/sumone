@@ -12,9 +12,9 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 from state import state
-from config import SCRIPT_DIR, log
+from config import SCRIPT_DIR, DATA_DIR, log
 
-_SNAPSHOTS_DIR = os.path.join(SCRIPT_DIR, ".snapshots")
+_SNAPSHOTS_DIR = os.path.join(DATA_DIR, "snapshots")
 
 # ---------------------------------------------------------------------------
 # Token management with TTL support
