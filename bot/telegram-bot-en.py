@@ -22,7 +22,7 @@ with open(CONFIG_FILE, encoding="utf-8") as f:
 
 BOT_TOKEN = _config["bot_token"]
 CHAT_ID = str(_config["chat_id"])
-GITHUB_REPO = _config.get("github_repo", "xmin-02/Claude-telegram-bot")
+GITHUB_REPO = _config.get("github_repo", "xmin-02/sumone")
 GITHUB_RAW = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main"
 
 FILES = [

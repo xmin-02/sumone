@@ -92,7 +92,7 @@
   "busy": "AI is processing. Use /cancel to stop.",
   "queued": "Message queued (#{pos}). Will be processed automatically after current task.",
   "bot_duplicate": "Duplicate detected: terminated {count} existing bot process(es) and restarting.",
-  "bot_started": "{provider} Bot started ({model})\nSend /help to see available commands.",
+  "bot_started": "sumone Bot started — {provider} ({model})\nSend /help to see available commands.",
   "restart": {
     "shutting_down": "Restarting bot..."
   },
@@ -172,9 +172,9 @@
     "open_web": "Open Settings Page"
   },
   "help": {
-    "title": "Sumone Bot",
+    "title": "sumone — Omni AI Orchestration",
     "usage_title": "Usage",
-    "usage_body": "Send text to chat with AI.\nAttach a photo or file to have it analyzed automatically.\nSend a skill command (e.g. /autopilot) to have AI run that skill.",
+    "usage_body": "Send text to chat with AI. (Claude / Codex / Gemini)\nAttach a photo or file to have it analyzed automatically.\nSend a skill command (e.g. /autopilot) to have AI run that skill.\nUse /connect to link an AI provider.",
     "session_title": "Sessions",
     "session_body": "The bot maintains conversation context per session.\nA session is created automatically on your first message,\nand subsequent messages continue in the same session.\nUse /session to reconnect to a previous session, or\n/clear to start a new session.",
     "model_title": "Model",

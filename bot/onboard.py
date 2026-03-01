@@ -203,7 +203,7 @@ def _clear_screen():
 
 def _header():
     return (f"\n  ╔{'═' * 50}╗\n"
-            f"  ║  {'Sumone':^46}  ║\n"
+            f"  ║  {'sumone — Omni AI Orchestration':^46}  ║\n"
             f"  ╚{'═' * 50}╝\n")
 
 

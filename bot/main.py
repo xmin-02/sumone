@@ -1003,27 +1003,27 @@ def _update_windows_task(target_bot_dir):
         return
     import subprocess as _sp
     bot_main = os.path.join(target_bot_dir, "main.py")
-    task_name = "ClaudeTelegramBot"
-    try:
-        # Check if task exists
-        result = _sp.run(
-            ["schtasks", "/Query", "/TN", task_name],
-            capture_output=True, text=True,
-            creationflags=_sp.CREATE_NO_WINDOW,
-        )
-        if result.returncode != 0:
-            return  # task doesn't exist
-        # Update the task action to point to new path
-        python_path = sys.executable
-        _sp.run(
-            ["schtasks", "/Change", "/TN", task_name,
-             "/TR", f'"{python_path}" "{bot_main}"'],
-            capture_output=True, text=True,
-            creationflags=_sp.CREATE_NO_WINDOW,
-        )
-        config.log.info("Windows Task Scheduler updated: %s", task_name)
-    except Exception as e:
-        config.log.warning("Failed to update Windows task: %s", e)
+    # Check both old and new task names for backward compatibility
+    for task_name in ["SumoneBot", "ClaudeTelegramBot"]:
+        try:
+            result = _sp.run(
+                ["schtasks", "/Query", "/TN", task_name],
+                capture_output=True, text=True,
+                creationflags=_sp.CREATE_NO_WINDOW,
+            )
+            if result.returncode != 0:
+                continue  # task doesn't exist
+            python_path = sys.executable
+            _sp.run(
+                ["schtasks", "/Change", "/TN", task_name,
+                 "/TR", f'"{python_path}" "{bot_main}"'],
+                capture_output=True, text=True,
+                creationflags=_sp.CREATE_NO_WINDOW,
+            )
+            config.log.info("Windows Task Scheduler updated: %s", task_name)
+            return
+        except Exception as e:
+            config.log.warning("Failed to update Windows task %s: %s", task_name, e)
 
 
 def _update_systemd_service(target_bot_dir):
