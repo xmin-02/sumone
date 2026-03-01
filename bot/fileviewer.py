@@ -1972,8 +1972,11 @@ function _connectProvider(provKey) {{
   fetch('/settings-connect/'+_sessionToken+'?provider='+provKey, {{method:'POST'}})
     .then(function(r) {{ return r.json(); }})
     .then(function(d) {{
-      if (d.ok) alert((T('s_ai_connect_started')||'연결을 시작합니다. 텔레그램을 확인하세요.'));
-      else alert(d.error || 'Error');
+      if (d.ok) {{
+        document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-size:1.2em;color:var(--text-primary,#ccc);text-align:center;padding:20px;">'
+          + '<div><p style="font-size:2em;">🔌</p><p>' + (T('s_ai_connect_started')||'연결을 시작합니다. 텔레그램을 확인하세요.') + '</p></div></div>';
+        setTimeout(function() {{ try {{ window.close(); }} catch(e) {{}} }}, 2000);
+      }} else alert(d.error || 'Error');
     }})
     .catch(function() {{ alert('Error'); }})
     .finally(function() {{ window.__connectPending = false; }});
@@ -2637,6 +2640,10 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             from telegram import send_html, CHAT_ID, tg_api as _tga
             import i18n as _i18n
             prov_label = AI_MODELS[provider].get("label", provider.title())
+            # Delete the settings link message in Telegram
+            if _ViewerHandler.settings_msg_id:
+                _tga("deleteMessage", {"chat_id": CHAT_ID, "message_id": _ViewerHandler.settings_msg_id})
+                _ViewerHandler.settings_msg_id = None
             send_html(f"🔌 <b>{prov_label}</b> — {_i18n.t('ai_connect.started')}")
             import threading as _thr
             def _run_connect():
