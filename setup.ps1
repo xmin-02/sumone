@@ -165,9 +165,8 @@ function Download-Bot {
         $url  = "$GITHUB_RAW/$src"
         $out  = Join-Path $INSTALL_DIR $dest
         $i++
-        Write-Host "`r  " -NoNewline
-        Write-Host "[$i/$total]" -ForegroundColor Cyan -NoNewline
-        Write-Host " $dest" -NoNewline
+        $line = "  [$i/$total] $dest"
+        Write-Host "`r$($line.PadRight(80))" -NoNewline
         try {
             Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -ErrorAction Stop
         } catch {
