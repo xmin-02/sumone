@@ -2009,8 +2009,9 @@ function saveSettings() {{
           setTimeout(function() {{ window.close(); }}, 3000);
         }} else {{
           document.getElementById('save-status').style.display = '';
-          btn.textContent = T('s_save');
-          btn.disabled = false;
+          btn.textContent = T('s_saved') || '✔ 저장됨';
+          btn.disabled = true;
+          setTimeout(function() {{ window.close(); }}, 1500);
         }}
       }});
     }} else {{
@@ -2293,6 +2294,8 @@ class _ViewerHandler(BaseHTTPRequestHandler):
 
         if action == "settings":
             body = _page_settings(session_token)
+            with open("/tmp/_debug_settings.html", "w") as _df:
+                _df.write(body)
             self._send_html(200, body)
             return
 
