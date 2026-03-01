@@ -470,9 +470,16 @@ def _try_install(provider_key, lang):
 
     # All install attempts failed
     print(f"\n{_t(lang, 'install_fail')}")
-    # Show first command as manual instruction
+    # Show appropriate manual instruction (prefer npm on Windows, last cmd otherwise)
     if info["install_cmds"]:
-        cmd_str = " ".join(info["install_cmds"][0])
+        manual_cmd = info["install_cmds"][0]
+        if IS_WINDOWS:
+            # On Windows, skip brew commands — show npm command instead
+            for c in info["install_cmds"]:
+                if c[0] != "brew":
+                    manual_cmd = c
+                    break
+        cmd_str = " ".join(manual_cmd)
         print(_t(lang, "install_manual").format(cmd=cmd_str))
     return False
 

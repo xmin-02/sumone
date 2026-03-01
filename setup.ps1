@@ -42,10 +42,11 @@ function Print-Banner {
 }
 
 # ── [1/4] System Check ───────────────────────────────────────────────────────
-function Check-Python {
+function Check-Deps {
     Print-Banner
     Write-Host "  [1/4] System Check`n" -ForegroundColor White
 
+    # --- Python ---
     $script:PYTHON = $null
     foreach ($cmd in @("python", "python3", "py")) {
         try {
@@ -54,10 +55,45 @@ function Check-Python {
         } catch {}
     }
     if (-not $script:PYTHON) {
-        Write-Err "Python 3 not found. Download: https://python.org/downloads/"
-        exit 1
+        Write-Info "Python 3 not found. Attempting install via winget..."
+        try {
+            winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+            # Refresh PATH
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+            foreach ($cmd in @("python", "python3", "py")) {
+                try {
+                    $ver = & $cmd --version 2>&1
+                    if ($ver -match "Python 3") { $script:PYTHON = $cmd; break }
+                } catch {}
+            }
+        } catch {}
+        if (-not $script:PYTHON) {
+            Write-Err "Python 3 not found. Download: https://python.org/downloads/"
+            exit 1
+        }
     }
     Write-Ok "Python: $(& $script:PYTHON --version 2>&1)"
+
+    # --- Node.js / npm ---
+    $npmFound = Get-Command "npm" -ErrorAction SilentlyContinue
+    if ($npmFound) {
+        $nodeVer = & node --version 2>&1
+        Write-Ok "Node.js: $nodeVer"
+    } else {
+        Write-Info "Node.js not found. Attempting install via winget..."
+        try {
+            winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+            $npmFound = Get-Command "npm" -ErrorAction SilentlyContinue
+        } catch {}
+        if ($npmFound) {
+            $nodeVer = & node --version 2>&1
+            Write-Ok "Node.js: $nodeVer (auto-installed)"
+        } else {
+            Write-Warn "Node.js not found. AI CLIs (Codex, Gemini) require npm."
+            Write-Host "    Download: https://nodejs.org/" -ForegroundColor DarkGray
+        }
+    }
 }
 
 # ── [2/4] Download ───────────────────────────────────────────────────────────
@@ -87,26 +123,35 @@ function Download-Bot {
         @("bot/fileviewer.py",                    "bot/fileviewer.py"),
         @("bot/tunnel.py",                        "bot/tunnel.py"),
         @("bot/onboard.py",                       "bot/onboard.py"),
+        @("bot/cli_watcher.py",                   "bot/cli_watcher.py"),
         @("bot/ai/__init__.py",                   "bot/ai/__init__.py"),
         @("bot/ai/claude.py",                     "bot/ai/claude.py"),
         @("bot/ai/codex.py",                      "bot/ai/codex.py"),
         @("bot/ai/gemini.py",                     "bot/ai/gemini.py"),
+        @("bot/ai/connect.py",                    "bot/ai/connect.py"),
         @("bot/i18n/__init__.py",                 "bot/i18n/__init__.py"),
         @("bot/i18n/ko.json",                     "bot/i18n/ko.json"),
         @("bot/i18n/en.json",                     "bot/i18n/en.json"),
         @("bot/commands/__init__.py",             "bot/commands/__init__.py"),
+        @("bot/commands/core/__init__.py",        "bot/commands/core/__init__.py"),
         @("bot/commands/core/help.py",            "bot/commands/core/help.py"),
         @("bot/commands/core/status.py",          "bot/commands/core/status.py"),
         @("bot/commands/core/cancel.py",          "bot/commands/core/cancel.py"),
         @("bot/commands/core/restart.py",         "bot/commands/core/restart.py"),
+        @("bot/commands/ai/__init__.py",          "bot/commands/ai/__init__.py"),
         @("bot/commands/ai/model.py",             "bot/commands/ai/model.py"),
         @("bot/commands/ai/cost.py",              "bot/commands/ai/cost.py"),
+        @("bot/commands/ai/connect_cmd.py",       "bot/commands/ai/connect_cmd.py"),
+        @("bot/commands/file/__init__.py",        "bot/commands/file/__init__.py"),
         @("bot/commands/file/pwd.py",             "bot/commands/file/pwd.py"),
         @("bot/commands/file/cd.py",              "bot/commands/file/cd.py"),
         @("bot/commands/file/ls.py",              "bot/commands/file/ls.py"),
+        @("bot/commands/session/__init__.py",     "bot/commands/session/__init__.py"),
         @("bot/commands/session/session.py",      "bot/commands/session/session.py"),
         @("bot/commands/session/clear.py",        "bot/commands/session/clear.py"),
+        @("bot/commands/usage/__init__.py",       "bot/commands/usage/__init__.py"),
         @("bot/commands/usage/total_tokens.py",   "bot/commands/usage/total_tokens.py"),
+        @("bot/commands/system/__init__.py",      "bot/commands/system/__init__.py"),
         @("bot/commands/system/settings.py",      "bot/commands/system/settings.py"),
         @("bot/commands/system/update.py",        "bot/commands/system/update.py"),
         @("bot/commands/system/skills.py",        "bot/commands/system/skills.py"),
@@ -228,7 +273,7 @@ function Setup-AutoStart {
     Print-Banner
     Write-Host "  [4/4] Auto-start setup`n" -ForegroundColor White
 
-    $taskName   = "ClaudeTelegramBot"
+    $taskName   = "SumoneBot"
     $pythonPath = (Get-Command $script:PYTHON -ErrorAction SilentlyContinue).Source
     if (-not $pythonPath) { $pythonPath = $script:PYTHON }
 
@@ -256,14 +301,14 @@ function Setup-AutoStart {
 
     Write-Host ""
     Write-Host "  Uninstall:" -ForegroundColor DarkGray
-    Write-Host "    Stop-ScheduledTask -TaskName ClaudeTelegramBot" -ForegroundColor DarkGray
-    Write-Host "    Unregister-ScheduledTask -TaskName ClaudeTelegramBot -Confirm:`$false" -ForegroundColor DarkGray
+    Write-Host "    Stop-ScheduledTask -TaskName SumoneBot" -ForegroundColor DarkGray
+    Write-Host "    Unregister-ScheduledTask -TaskName SumoneBot -Confirm:`$false" -ForegroundColor DarkGray
     Write-Host "    Remove-Item -Recurse -Force '$INSTALL_DIR'" -ForegroundColor DarkGray
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 function Main {
-    Check-Python         # [1/4]
+    Check-Deps           # [1/4]
     Download-Bot         # [2/4]
     Install-Cloudflared
 
