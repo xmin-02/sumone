@@ -1630,7 +1630,9 @@ def _page_settings(session_token):
     s["work_dir"] = WORK_DIR
     settings_json = _json.dumps(s)
     timeout_seconds = int(s.get("settings_timeout_minutes", 15)) * 60
-    ai_models_json = _json.dumps(AI_MODELS)
+    enabled = settings.get("enabled_providers", ["claude"])
+    filtered_models = {k: v for k, v in AI_MODELS.items() if k in enabled}
+    ai_models_json = _json.dumps(filtered_models or AI_MODELS)
     cli_status_json = _json.dumps(state.cli_status)
     token_periods_json = _json.dumps(TOKEN_PERIODS)
     theme_options_json = _json.dumps(THEME_OPTIONS)
@@ -1903,8 +1905,11 @@ function initSettings() {{
 function _buildAiProviders() {{
   var container = document.getElementById('ai-providers');
   container.innerHTML = '';
-  var activeModel = _settings.default_model || 'claude';
-  var activeSub = _settings.default_sub_model || 'sonnet';
+  var provKeys = Object.keys(_aiModels);
+  var activeModel = _settings.default_model || (provKeys.length ? provKeys[0] : 'claude');
+  var firstInfo = _aiModels[activeModel] || {{}};
+  var firstSub = firstInfo.default || (firstInfo.sub_models ? Object.keys(firstInfo.sub_models)[0] : '');
+  var activeSub = _settings.default_sub_model || firstSub;
   Object.keys(_aiModels).forEach(function(provKey) {{
     var info = _aiModels[provKey];
     var connected = !!_cliStatus[provKey];
@@ -1992,8 +1997,12 @@ function gatherSettings() {{
   }}
   _putIfChanged(s, 'token_ttl', tokenTtl);
   if (_modelDirty) {{
-    _putIfChanged(s, 'default_model', _settings.default_model || 'claude');
-    _putIfChanged(s, 'default_sub_model', _settings.default_sub_model || 'sonnet');
+    var _pk = Object.keys(_aiModels);
+    var _dm = _settings.default_model || (_pk.length ? _pk[0] : 'claude');
+    var _di = _aiModels[_dm] || {{}};
+    var _ds = _settings.default_sub_model || _di.default || (_di.sub_models ? Object.keys(_di.sub_models)[0] : '');
+    _putIfChanged(s, 'default_model', _dm);
+    _putIfChanged(s, 'default_sub_model', _ds);
     s._model_dirty = true;
   }}
   var bls = document.getElementById('sel-bot-lang');
@@ -2621,12 +2630,12 @@ class _ViewerHandler(BaseHTTPRequestHandler):
                 return
             from ai.connect import is_connect_active
             if is_connect_active():
-                self._send_json({"ok": False, "error": "이미 다른 연결 작업이 진행 중입니다."})
+                self._send_json({"ok": False, "error": "Another connection is already in progress."})
                 return
             from telegram import send_html, CHAT_ID, tg_api as _tga
             import i18n as _i18n
             prov_label = AI_MODELS[provider].get("label", provider.title())
-            send_html(f"🔌 <b>{prov_label}</b> 연결을 시작합니다.\n잠시 후 안내 메시지가 전송됩니다.")
+            send_html(f"🔌 <b>{prov_label}</b> — {_i18n.t('ai_connect.started')}")
             import threading as _thr
             def _run_connect():
                 from ai.connect import run_connect_flow

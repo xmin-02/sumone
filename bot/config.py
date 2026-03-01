@@ -120,12 +120,20 @@ MAX_PARTS = 20
 POLL_TIMEOUT = 30
 
 MODEL_ALIASES = {
+    # Claude
     "opus": "claude-opus-4-6",
     "sonnet": "claude-sonnet-4-6",
     "haiku": "claude-haiku-4-5-20251001",
     "o4": "claude-opus-4-6",
     "s4": "claude-sonnet-4-6",
     "h4": "claude-haiku-4-5-20251001",
+    # Codex
+    "gpt-codex": "gpt-5.3-codex",
+    "codex-max": "gpt-5.1-codex-max",
+    "codex-mini": "gpt-5.1-codex-mini",
+    # Gemini
+    "flash": "gemini-2.5-flash",
+    "pro": "gemini-2.5-pro",
 }
 
 
@@ -147,7 +155,7 @@ def resolve_model(name):
         for prov, info in AI_MODELS.items():
             if resolved in info.get("sub_models", {}).values():
                 return resolved, prov
-        return resolved, "claude"
+        return None, None
     return None, None
 
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")

@@ -1,9 +1,6 @@
 """Codex CLI runner."""
-import os
-
 from ai import BaseRunner, ParsedEvent
 from ai.claude import _parse_deleted_paths
-from config import log
 import config as _cfg
 from state import state
 
@@ -22,10 +19,6 @@ class CodexRunner(BaseRunner):
             cmd += ["-m", state.model]
         cmd.append(message)
         return cmd
-
-    def _build_env(self):
-        env = super()._build_env()
-        return env
 
     def _parse_event(self, event):
         """Parse Codex JSONL event. Returns list[ParsedEvent]."""

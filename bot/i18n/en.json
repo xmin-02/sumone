@@ -37,7 +37,7 @@
     "continue_hint": "Send a message to continue this session."
   },
   "question": {
-    "title": "Claude — Selection Required",
+    "title": "AI — Selection Required",
     "prompt": "Enter a number to select.",
     "selected": "\"{label}\" selected."
   },
@@ -48,9 +48,9 @@
     "examples": "Examples",
     "restore_default": "default — restore default",
     "reset_done": "Model reset",
-    "reset_to": "default (sonnet)",
+    "reset_to": "default",
     "changed": "Model changed",
-    "default_name": "default (sonnet)",
+    "default_name": "default",
     "cli_default": "CLI default",
     "reset_keywords": ["default", "reset"]
   },
@@ -89,7 +89,7 @@
     "label": "Typing",
     "cancel_hint": "/cancel to stop"
   },
-  "busy": "Claude is processing. Use /cancel to stop.",
+  "busy": "AI is processing. Use /cancel to stop.",
   "queued": "Message queued (#{pos}). Will be processed automatically after current task.",
   "bot_duplicate": "Duplicate detected: terminated {count} existing bot process(es) and restarting.",
   "bot_started": "{provider} Bot started ({model})\nSend /help to see available commands.",
@@ -172,13 +172,13 @@
     "open_web": "Open Settings Page"
   },
   "help": {
-    "title": "Claude Code Telegram Bot",
+    "title": "Sumone Bot",
     "usage_title": "Usage",
-    "usage_body": "Send text to chat with Claude.\nAttach a photo or file to have it analyzed automatically.\nSend a skill command (e.g. /autopilot) to have Claude run that skill.",
+    "usage_body": "Send text to chat with AI.\nAttach a photo or file to have it analyzed automatically.\nSend a skill command (e.g. /autopilot) to have AI run that skill.",
     "session_title": "Sessions",
     "session_body": "The bot maintains conversation context per session.\nA session is created automatically on your first message,\nand subsequent messages continue in the same session.\nUse /session to reconnect to a previous session, or\n/clear to start a new session.",
     "model_title": "Model",
-    "model_body": "/model opus, /model sonnet, /model haiku\n/model default to restore the default",
+    "model_body": "/model [name] to change model\n/model default to restore the default\ne.g. /model opus, /model flash, /model codex",
     "commands_title": "Command Reference",
     "commands_body": "/builtin — List CLI built-in commands\n/skills — List OMC skills\n/update_bot — Auto-update bot",
     "examples_title": "Examples",
@@ -188,7 +188,7 @@
     "title": "Built-in Commands (CLI)",
     "handled": "Handled by bot",
     "handled_list": "  /clear — Clear session\n  /cost — Show cost\n  /model — Change/show model\n  /session — Select session\n  /status — Show status\n  /cancel — Cancel task\n  /pwd — Current working directory\n  /cd — Change directory\n  /ls — List files\n  /settings — Bot settings (cost display, status messages, etc.)\n  /update_bot — Auto-update bot (download latest code from GitHub)",
-    "passed": "Passed to Claude",
+    "passed": "Passed to AI",
     "passed_list": "  /compact — Compress context\n  /context — Context usage\n  /init — Initialize project\n  /review — Code review\n  /security-review — Security review\n  /pr-comments — PR comments\n  /release-notes — Release notes\n  /insights — Insights\n  /extra-usage — Extra usage",
     "cli_only": "CLI only (not supported in bot)",
     "cli_only_list": "  /config — Change settings\n  /permissions — Permission settings\n  /doctor — Diagnostics\n  /login, /logout — Authentication\n  /add-dir — Add directory\n  /agents — Agent settings"
@@ -213,7 +213,7 @@
     ["help", "Help"],
     ["session", "Session list & select"],
     ["clear", "New session"],
-    ["model", "Change model (opus/sonnet/haiku)"],
+    ["model", "Change model"],
     ["cost", "Cost info"],
     ["status", "Current status"],
     ["settings", "Bot settings"],
@@ -232,6 +232,9 @@
     "title": "{plugin} Skills ({count})",
     "hint": "Tap a command to copy. Add arguments and send.",
     "botfather_desc": "{plugin} plugin skills ({count})"
+  },
+  "ai_connect": {
+    "started": "Starting connection. Check Telegram for instructions."
   },
   "file_viewer": {
     "link": "View modified files ({count})"

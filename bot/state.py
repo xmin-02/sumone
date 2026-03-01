@@ -274,26 +274,27 @@ def get_provider_env(provider):
     """Build environment variables for provider-specific auth."""
     auth = get_provider_auth(provider)
     env = {}
-    if provider == "claude":
-        token = auth.get("oauth_token")
-        refresh = auth.get("oauth_refresh_token")
-        api_key = auth.get("api_key")
-        auth_token = auth.get("auth_token")
-        account_uuid = auth.get("account_uuid")
-        user_email = auth.get("user_email")
-        organization_uuid = auth.get("organization_uuid")
-        if token:
-            env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-        if refresh:
-            env["CLAUDE_CODE_OAUTH_REFRESH_TOKEN"] = refresh
-        if account_uuid:
-            env["CLAUDE_CODE_ACCOUNT_UUID"] = account_uuid
-        if user_email:
-            env["CLAUDE_CODE_USER_EMAIL"] = user_email
-        if organization_uuid:
-            env["CLAUDE_CODE_ORGANIZATION_UUID"] = organization_uuid
-        if api_key:
-            env["ANTHROPIC_API_KEY"] = api_key
-        if auth_token:
-            env["ANTHROPIC_AUTH_TOKEN"] = auth_token
+    _ENV_MAP = {
+        "claude": {
+            "oauth_token": "CLAUDE_CODE_OAUTH_TOKEN",
+            "oauth_refresh_token": "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+            "account_uuid": "CLAUDE_CODE_ACCOUNT_UUID",
+            "user_email": "CLAUDE_CODE_USER_EMAIL",
+            "organization_uuid": "CLAUDE_CODE_ORGANIZATION_UUID",
+            "api_key": "ANTHROPIC_API_KEY",
+            "auth_token": "ANTHROPIC_AUTH_TOKEN",
+        },
+        "codex": {
+            "api_key": "OPENAI_API_KEY",
+            "org_id": "OPENAI_ORG_ID",
+        },
+        "gemini": {
+            "api_key": "GEMINI_API_KEY",
+            "project": "GOOGLE_CLOUD_PROJECT",
+        },
+    }
+    for auth_key, env_key in _ENV_MAP.get(provider, {}).items():
+        val = auth.get(auth_key)
+        if val:
+            env[env_key] = val
     return env

@@ -63,15 +63,19 @@ def handle_model(text):
     name = args[0].lower()
     reset_kw = t("model.reset_keywords")
     if isinstance(reset_kw, list) and name in reset_kw:
-        switch_provider("claude")
-        prov_info = AI_MODELS["claude"]
-        default_sub = prov_info.get("default", "sonnet")
+        default_prov = settings.get("default_model", "claude")
+        if default_prov not in AI_MODELS:
+            default_prov = "claude"
+        switch_provider(default_prov)
+        prov_info = AI_MODELS[default_prov]
+        default_sub = prov_info.get("default", list(prov_info["sub_models"].keys())[0])
         state.model = prov_info["sub_models"].get(default_sub)
         state._provider_models[state.provider] = state.model
         update_config("model", state.model)
         update_config("provider_models", dict(state._provider_models))
-        _sync_settings("claude", state.model)
-        send_html(f"<b>{t('model.reset_done')}:</b> Claude - <code>{escape_html(state.model)}</code>"); return
+        _sync_settings(default_prov, state.model)
+        label = prov_info.get("label", default_prov.title())
+        send_html(f"<b>{t('model.reset_done')}:</b> {label} - <code>{escape_html(state.model)}</code>"); return
     # Block disabled providers
     if name in AI_MODELS and name not in enabled:
         send_html(t("error.provider_disabled", name=f"<code>{name}</code>"))
