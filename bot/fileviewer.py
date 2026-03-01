@@ -227,6 +227,20 @@ def _aggregate_files(entries):
     return result
 
 
+def _find_latest_snapshot_for_path(fpath):
+    """Find the latest snapshot file path for a given original file path."""
+    from state import state
+    norm = os.path.normpath(fpath)
+    for entry in reversed(state.modified_files):
+        if os.path.normpath(entry.get("path", "")) == norm:
+            snap = entry.get("snapshot")
+            if snap:
+                sp = os.path.join(_SNAPSHOTS_DIR, snap)
+                if os.path.isfile(sp):
+                    return sp
+    return None
+
+
 def _read_snapshot(snapshot_name):
     """Read snapshot content as text. Returns None on failure."""
     if not snapshot_name:
@@ -1236,12 +1250,26 @@ def _page_view(fpath, idx, session_token, title_suffix=""):
 
     content_html = ""
     if ftype == "code":
+        text = None
         try:
             with open(fpath, encoding="utf-8", errors="replace") as f:
                 text = f.read()
+        except Exception:
+            pass
+        if text is None:
+            # Fallback: read from latest snapshot
+            snap = _find_latest_snapshot_for_path(fpath)
+            if snap:
+                try:
+                    with open(snap, encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                    title_suffix = "(snapshot)"
+                except Exception:
+                    pass
+        if text is not None:
             content_html = _render_code_block(text, fpath)
-        except Exception as e:
-            content_html = f'<div class="no-preview">Cannot read file: {html.escape(str(e))}</div>'
+        else:
+            content_html = '<div class="no-preview">Cannot read file</div>'
     elif ftype == "image":
         content_html = f'<img class="img-preview" src="/raw/{session_token}/{idx}" alt="{html.escape(fname)}">'
     else:
@@ -2439,30 +2467,39 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             return
 
         if action == "download" and len(path_parts) >= 3:
-            result = self._validate_file_index(path_parts[2])
+            result = self._validate_file_index(path_parts[2], allow_missing=True)
             if not result:
                 self._send_error(404, "File not found")
                 return
             idx, fpath = result
             fname = os.path.basename(fpath)
-            mime, _ = mimetypes.guess_type(fpath)
-            mime = mime or "application/octet-stream"
+            data = None
             try:
                 with open(fpath, "rb") as f:
                     data = f.read()
-                self.send_response(200)
-                self.send_header("Content-Type", mime)
-                self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-            except Exception as e:
-                log.warning("File viewer read error: %s", e)
+            except Exception:
+                snap = _find_latest_snapshot_for_path(fpath)
+                if snap:
+                    try:
+                        with open(snap, "rb") as f:
+                            data = f.read()
+                    except Exception:
+                        pass
+            if data is None:
                 self._send_error(500, "Read error")
+                return
+            mime, _ = mimetypes.guess_type(fpath)
+            mime = mime or "application/octet-stream"
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
             return
 
         if action == "raw" and len(path_parts) >= 3:
-            result = self._validate_file_index(path_parts[2])
+            result = self._validate_file_index(path_parts[2], allow_missing=True)
             if not result:
                 self._send_error(404, "File not found")
                 return
@@ -2470,20 +2507,29 @@ class _ViewerHandler(BaseHTTPRequestHandler):
             if _file_type(fpath) != "image":
                 self._send_error(403, "Not an image")
                 return
-            mime, _ = mimetypes.guess_type(fpath)
-            mime = mime or "image/png"
+            data = None
             try:
                 with open(fpath, "rb") as f:
                     data = f.read()
-                self.send_response(200)
-                self.send_header("Content-Type", mime)
-                self.send_header("Content-Length", str(len(data)))
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(data)
-            except Exception as e:
-                log.warning("File viewer read error: %s", e)
+            except Exception:
+                snap = _find_latest_snapshot_for_path(fpath)
+                if snap:
+                    try:
+                        with open(snap, "rb") as f:
+                            data = f.read()
+                    except Exception:
+                        pass
+            if data is None:
                 self._send_error(500, "Read error")
+                return
+            mime, _ = mimetypes.guess_type(fpath)
+            mime = mime or "image/png"
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
             return
 
         self._send_error()
