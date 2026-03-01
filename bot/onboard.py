@@ -241,7 +241,7 @@ def _render_menu(lang, step_num, total_steps, title, desc, options, selected):
         else:
             print(f"    {opt}")
 
-    print(f"\n  ↑↓ {_t(lang, 'welcome_desc')}")
+    print(f"\n  {_t(lang, 'welcome_desc')}")
 
 
 def _render_multi_menu(lang, step_num, total_steps, title, desc,
